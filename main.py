@@ -2,6 +2,7 @@ import argparse
 import asyncio
 from pathlib import Path
 import sys
+from typing import Optional
 
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_FILE = ROOT_DIR / "output" / "football_games.json"
@@ -18,14 +19,17 @@ async def run_unified_flow(
     output_file: Path = DEFAULT_OUTPUT_FILE,
     post_click_wait_ms: int = 2500,
     visible: bool = False,
+    team: Optional[str] = None,
 ):
     is_headless = not visible
 
     print("\n" + "=" * 65)
     print(" ⚽ Football Stream Pipeline")
-    print(f" Browser:  CHROMIUM (headless={is_headless})")
-    print(f" Player:   MPV")
-    print(f" Adblock:  {'uBlock Origin Lite (Enabled 🛡️)' if use_adblock else 'Disabled'}")
+    print(f" Browser:  Chromium (headless={is_headless})")
+    print(f" Player:   mpv")
+    print(f" Adblock:  {'uBlock Origin Lite' if use_adblock else 'Disabled'}")
+    if team:
+        print(f" Team:     {team} (Auto-select)")
     print("=" * 65 + "\n")
 
     # ---------------------------------------------------------
@@ -41,10 +45,13 @@ async def run_unified_flow(
         return
 
     # ---------------------------------------------------------
-    # STEP 2: SELECT GAME (TERMINAL ARROW-KEY MENU)
+    # STEP 2: SELECT GAME (TERMINAL ARROW-KEY MENU OR AUTO-SELECT)
     # ---------------------------------------------------------
-    print("\n📋 Step 2: Presenting game selection menu...")
-    selected_match = prompt_game_selection(matches)
+    if team:
+        print(f"\n📋 Step 2: Auto-selecting match for team '{team}'...")
+    else:
+        print("\n📋 Step 2: Presenting game selection menu...")
+    selected_match = prompt_game_selection(matches, team=team)
 
     if not selected_match:
         print("\nExited without selecting a match.")
@@ -86,7 +93,7 @@ async def run_unified_flow(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run all steps headlessly in Chromium (scrape, game select, stream resolve) and stream in MPV."
+        description="Run all steps headlessly in Chromium (scrape, game select, stream resolve) and stream in mpv."
     )
     parser.add_argument(
         "--visible",
@@ -111,6 +118,13 @@ def main():
         default=str(DEFAULT_OUTPUT_FILE),
         help="Path to save scraped games (default: output/football_games.json).",
     )
+    parser.add_argument(
+        "-t",
+        "--team",
+        type=str,
+        default=None,
+        help="Auto-select match containing this team name (fuzzy match).",
+    )
 
     args = parser.parse_args()
 
@@ -121,6 +135,7 @@ def main():
                 output_file=Path(args.output),
                 post_click_wait_ms=args.wait_ms,
                 visible=args.visible,
+                team=args.team,
             )
         )
     except KeyboardInterrupt:

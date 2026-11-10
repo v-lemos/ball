@@ -57,6 +57,11 @@ source .venv/bin/activate
 # Default: 100% headless scraping & resolution, launches directly into MPV (1080p 60fps)
 python main.py
 
+# Auto-select a match by team name (fuzzy matching, e.g. "bayern", "porto", "chelsea")
+python main.py --team bayern
+# Or shorthand:
+python main.py -t porto
+
 # Optional: Keep the browser window visible across all steps
 python main.py --visible
 
@@ -83,6 +88,8 @@ You can also run any step independently:
 * **Game Selector only**:
   ```bash
   python src/select_game.py
+  # Or with team auto-selection:
+  python src/select_game.py -t bayern
   ```
 * **Stream Selector only** (for a specific match URL):
   ```bash

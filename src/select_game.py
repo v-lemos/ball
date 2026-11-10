@@ -1,10 +1,13 @@
 import argparse
 import asyncio
 from datetime import datetime
+from difflib import SequenceMatcher
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
+import unicodedata
 
 SRC_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SRC_DIR.parent
@@ -16,7 +19,7 @@ DEFAULT_DATA_FILE = PROJECT_ROOT / "output" / "football_games.json"
 from scraper import FootballScraper
 from select_stream import resolve_stream_headless
 from player_launcher import play_stream_with_mpv
-from terminal_menu import interactive_game_menu
+from terminal_menu import interactive_game_menu, interactive_select
 
 
 def parse_match_time(time_str: str, now: datetime) -> Optional[Tuple[datetime, float]]:
@@ -79,11 +82,185 @@ def categorize_matches(matches: List[Dict[str, Any]]):
     return selectable, upcoming, finished
 
 
-def prompt_game_selection(matches: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Takes a list of matches, displays the terminal menu, and returns the chosen match dict."""
+def normalize_name(text: str) -> str:
+    """Normalizes team or search strings: strips accents, lowercases, removes punctuation."""
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    text = text.lower()
+    text = re.sub(r"[^\w\s]", " ", text)
+    return " ".join(text.split())
+
+
+def score_team_match(query: str, team_name: str) -> float:
+    """Calculates a match confidence score between 0.0 and 1.0.
+
+    Supports exact matches, token overlap, and fuzzy string matching.
+    """
+    q = normalize_name(query)
+    t = normalize_name(team_name)
+    if not q or not t:
+        return 0.0
+
+    if q == t:
+        return 1.0
+
+    t_tokens = t.split()
+    q_tokens = q.split()
+
+    # Short query (<= 2 chars): require exact match or exact word token
+    if len(q) <= 2:
+        return 0.95 if (q == t or q in t_tokens) else 0.0
+
+    meaningful_q = [tok for tok in q_tokens if len(tok) >= 3]
+    meaningful_t = [tok for tok in t_tokens if len(tok) >= 3]
+
+    # Full substring match
+    if q in t:
+        if q in t_tokens or (len(q_tokens) > 1 and all(token in t_tokens for token in q_tokens)):
+            return 0.95
+        len_ratio = len(q) / len(t)
+        return 0.85 + (0.10 * len_ratio)
+
+    if t in q:
+        if t in q_tokens or (len(t_tokens) > 1 and all(token in q_tokens for token in t_tokens)):
+            return 0.95
+        len_ratio = len(t) / len(q)
+        return 0.85 + (0.10 * len_ratio)
+
+    # Token overlap based on meaningful query tokens
+    if meaningful_q:
+        matched_q_count = sum(1 for q_tok in meaningful_q if q_tok in t_tokens)
+        if matched_q_count == len(meaningful_q):
+            return 0.95
+        if meaningful_t and all(t_tok in q_tokens for t_tok in meaningful_t):
+            return 0.95
+
+    # Fuzzy string matching with SequenceMatcher
+    full_ratio = SequenceMatcher(None, q, t).ratio()
+    best_token_ratio = 0.0
+
+    for i in range(len(t_tokens) - len(q_tokens) + 1):
+        window = " ".join(t_tokens[i : i + len(q_tokens)])
+        r = SequenceMatcher(None, q, window).ratio()
+        if r > best_token_ratio:
+            best_token_ratio = r
+
+    if len(meaningful_q) == 1:
+        for t_tok in meaningful_t:
+            r = SequenceMatcher(None, meaningful_q[0], t_tok).ratio()
+            if r > best_token_ratio:
+                best_token_ratio = r
+
+    return max(full_ratio, best_token_ratio)
+
+
+def find_matching_matches(
+    matches: List[Dict[str, Any]], query: str, threshold: float = 0.65
+) -> List[Tuple[Dict[str, Any], float, str]]:
+    """Returns matching games sorted by score and status priority (LIVE > upcoming > finished)."""
+    results = []
+    for m in matches:
+        home_name = m.get("home_team", {}).get("name") or ""
+        away_name = m.get("away_team", {}).get("name") or ""
+        home_score = score_team_match(query, home_name)
+        away_score = score_team_match(query, away_name)
+
+        if home_score >= away_score:
+            best_score = home_score
+            matched_team = home_name
+        else:
+            best_score = away_score
+            matched_team = away_name
+
+        if best_score >= threshold:
+            results.append((m, best_score, matched_team))
+
+    def sort_key(item):
+        m, score, _ = item
+        status = (m.get("status") or "").lower()
+        is_live = m.get("is_live", False) or status == "inprogress"
+        status_rank = 2 if is_live else (1 if status != "finished" else 0)
+        return (round(score, 2), status_rank, score)
+
+    results.sort(key=sort_key, reverse=True)
+    return results
+
+
+def select_game_by_team(
+    matches: List[Dict[str, Any]], query: str
+) -> Optional[Dict[str, Any]]:
+    """Attempts to auto-select a game by matching home or away team with the given query.
+
+    Returns the selected match dict, or None if no match found / user cancelled.
+    """
+    candidates = find_matching_matches(matches, query)
+    if not candidates:
+        print(f"⚠️  No matches found for team query '{query}'.")
+        print("Falling back to full match selection menu...\n")
+        return None
+
+    top_match, top_score, top_team = candidates[0]
+    second_score = candidates[1][1] if len(candidates) > 1 else 0.0
+
+    is_single_choice = len(candidates) == 1 or (top_score >= 0.85 and (top_score - second_score) >= 0.15)
+
+    if is_single_choice:
+        home = top_match.get("home_team", {}).get("name", "TBD")
+        away = top_match.get("away_team", {}).get("name", "TBD")
+        status = (top_match.get("status") or "").lower()
+        is_live = top_match.get("is_live", False) or status == "inprogress"
+        time_str = top_match.get("time_or_score", "")
+
+        if status == "finished":
+            print(f"\n⚠️  Found match for '{query}': {home} vs {away}, but it is already FINISHED ({time_str or 'FT'}).")
+            print("Falling back to full match selection menu...\n")
+            return None
+
+        tag = "LIVE" if is_live else f"Starts at {time_str}"
+        print(f"\n🎯 Auto-selected match for team '{query}': {home} vs {away} [{tag}] (matched '{top_team}', confidence {top_score:.0%})")
+        return top_match
+
+    # Multiple candidates: present menu limited to matching games
+    print(f"\n🤔 Multiple games matched '{query}':")
+    options = []
+    for m, score, matched_team in candidates:
+        home = m.get("home_team", {}).get("name", "TBD")
+        away = m.get("away_team", {}).get("name", "TBD")
+        status = (m.get("status") or "").lower()
+        is_live = m.get("is_live", False) or status == "inprogress"
+        time_str = m.get("time_or_score", "")
+        tag = "LIVE" if is_live else (f"FT {time_str}" if status == "finished" else time_str)
+        options.append(f"{home} vs {away} ({tag}) [matched '{matched_team}']")
+
+    selected_idx = interactive_select(
+        options=options,
+        title=f"Matches matching '{query}'",
+    )
+    if selected_idx is not None:
+        chosen = candidates[selected_idx][0]
+        chosen_home = chosen.get("home_team", {}).get("name", "TBD")
+        chosen_away = chosen.get("away_team", {}).get("name", "TBD")
+        print(f"\n🎯 Selected: {chosen_home} vs {chosen_away}")
+        return chosen
+
+    return None
+
+
+def prompt_game_selection(
+    matches: List[Dict[str, Any]],
+    team: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Takes a list of matches, optionally auto-selects by team name, displays the terminal menu, and returns the chosen match dict."""
     if not matches:
         print("No football matches available for selection.")
         return None
+
+    if team and team.strip():
+        chosen = select_game_by_team(matches, team.strip())
+        if chosen is not None:
+            return chosen
 
     selectable, upcoming, finished = categorize_matches(matches)
 
@@ -125,6 +302,7 @@ async def run_game_selection(
     data_file: Path = DEFAULT_DATA_FILE,
     force_fetch: bool = False,
     visible: bool = False,
+    team: Optional[str] = None,
 ):
     is_headless = not visible
     if not force_fetch and data_file.exists():
@@ -139,7 +317,7 @@ async def run_game_selection(
         print("No football matches found.")
         return
 
-    selected_match = prompt_game_selection(matches)
+    selected_match = prompt_game_selection(matches, team=team)
     if not selected_match:
         print("\nExited.")
         return
@@ -192,6 +370,13 @@ def main():
         action="store_true",
         help="Disable uBlock Origin Lite when resolving the stream.",
     )
+    parser.add_argument(
+        "-t",
+        "--team",
+        type=str,
+        default=None,
+        help="Auto-select match containing this team name (fuzzy match).",
+    )
 
     args = parser.parse_args()
 
@@ -202,6 +387,7 @@ def main():
                 data_file=Path(args.file),
                 force_fetch=args.fetch,
                 visible=args.visible,
+                team=args.team,
             )
         )
     except KeyboardInterrupt:
