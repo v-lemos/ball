@@ -25,7 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger("football_scraper")
 
 BASE_URL = "https://rdaily.live"
-TARGET_URL = f"{BASE_URL}/sports/football"
+TARGET_URL = f"{BASE_URL}/sports/hockey"
 
 
 async def _wait_and_extract_html(page: Page, timeout_ms: int = 30000) -> str:

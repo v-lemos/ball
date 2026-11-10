@@ -17,8 +17,8 @@ if str(SRC_DIR) not in sys.path:
 DEFAULT_DATA_FILE = PROJECT_ROOT / "output" / "football_games.json"
 
 from scraper import FootballScraper
-from select_stream import resolve_stream_headless
-from player_launcher import play_stream_with_mpv
+from select_stream import get_match_streams, get_default_stream_index, resolve_stream_headless
+from player_launcher import play_interactive_stream_session, play_stream_with_mpv
 from terminal_menu import interactive_game_menu, interactive_select
 
 
@@ -329,18 +329,20 @@ async def run_game_selection(
     print(f"\n🚀 Selected Match: {home} vs {away}")
     print(f"🔗 URL: {target_url}\n")
 
-    selected_stream = await resolve_stream_headless(
+    streams = await get_match_streams(
         match_url=target_url,
         headless=is_headless,
     )
 
-    if selected_stream:
-        await play_stream_with_mpv(
-            stream_url=selected_stream["url"],
+    if streams:
+        default_idx = get_default_stream_index(streams)
+        await play_interactive_stream_session(
+            streams=streams,
             match_url=target_url,
+            match_title=f"{home} vs {away}",
+            initial_index=default_idx,
             use_adblock=use_adblock,
             headless=is_headless,
-            match_title=f"{home} vs {away}",
         )
 
 

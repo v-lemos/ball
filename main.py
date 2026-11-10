@@ -10,8 +10,8 @@ DEFAULT_OUTPUT_FILE = ROOT_DIR / "output" / "football_games.json"
 from src.playground import launch_browser_context
 from src.scraper import FootballScraper
 from src.select_game import prompt_game_selection
-from src.select_stream import resolve_stream_headless
-from src.player_launcher import play_stream_with_mpv
+from src.select_stream import get_match_streams, get_default_stream_index, resolve_stream_headless
+from src.player_launcher import play_interactive_stream_session, play_stream_with_mpv
 
 
 async def run_unified_flow(
@@ -64,30 +64,37 @@ async def run_unified_flow(
     print(f"🔗 URL: {match_url}")
 
     # ---------------------------------------------------------
-    # STEP 3: RESOLVE STREAM
+    # STEP 3: RESOLVE STREAMS (SITE ORDER)
     # ---------------------------------------------------------
-    print(f"\n📡 Step 3: Resolving broadcast stream (headless={is_headless})...")
-    selected_stream = await resolve_stream_headless(
+    print(f"\n📡 Step 3: Resolving available broadcast streams (headless={is_headless})...")
+    streams = await get_match_streams(
         match_url=match_url,
         post_click_wait_ms=post_click_wait_ms,
         headless=is_headless,
     )
 
-    if not selected_stream:
-        print("❌ Could not resolve stream.")
+    if not streams:
+        print("❌ Could not resolve any streams for this match.")
         return
 
+    default_idx = get_default_stream_index(streams)
+    print(f"\n📋 Detected {len(streams)} stream option(s) in site order:")
+    for i, s in enumerate(streams):
+        tag = " \033[1;32m[Default]\033[0m" if i == default_idx else ""
+        print(f"   {i + 1:2d}. {s['name']}{tag}")
+
     # ---------------------------------------------------------
-    # STEP 4: PLAY STREAM IN MPV (VIA HEADLESS HLS RELAY)
+    # STEP 4: INTERACTIVE MPV PLAYBACK & STREAM SWITCHER
     # ---------------------------------------------------------
     match_title = f"{home} vs {away}"
-    print(f"\n🎬 Step 4: Launching MPV via HLS relay (headless={is_headless})...")
-    await play_stream_with_mpv(
-        stream_url=selected_stream["url"],
+    print(f"\n🎬 Step 4: Starting MPV with interactive stream switcher...")
+    await play_interactive_stream_session(
+        streams=streams,
         match_url=match_url,
+        match_title=match_title,
+        initial_index=default_idx,
         use_adblock=use_adblock,
         headless=is_headless,
-        match_title=match_title,
     )
 
 

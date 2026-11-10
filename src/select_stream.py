@@ -308,6 +308,34 @@ async def resolve_stream(
 resolve_stream_headless = resolve_stream
 
 
+async def get_match_streams(
+    match_url: str,
+    post_click_wait_ms: int = 2500,
+    headless: bool = True,
+) -> List[Dict[str, str]]:
+    """Scrapes all stream options from the match page in exact site order."""
+    logger.info(f"Resolving all streams (headless={headless}) for: {match_url}...")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=headless)
+        page = await browser.new_page()
+        try:
+            await page.goto(match_url, wait_until="domcontentloaded")
+            streams = await extract_streams_from_page(page, post_click_wait_ms=post_click_wait_ms)
+            return streams
+        finally:
+            await browser.close()
+
+
+def get_default_stream_index(streams: List[Dict[str, str]]) -> int:
+    """Returns the index of the best initial stream (PT stream if found, else 0)."""
+    if not streams:
+        return 0
+    for idx, s in enumerate(streams):
+        if s.get("name", "").strip().upper().endswith("PT"):
+            return idx
+    return 0
+
+
 async def play_stream_in_browser(
     stream: Dict[str, str],
     match_url: str,
