@@ -35,6 +35,9 @@ venv.bak/
 test-results/
 playwright-report/
 blob-report/
+.chrome_profile/
+temp_chrome_profile/
+.firefox_profile/
 
 # Logs & scratch
 *.log

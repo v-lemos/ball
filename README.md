@@ -1,14 +1,16 @@
-# SoccerStreams Scraper
+# SoccerStreams Scraper & Stream Viewer
 
-A Python scraper using Playwright optimized for Apple Silicon (macOS arm64) to fetch and structure football matches and competitions from [rdaily.live/sports/football](https://rdaily.live/sports/football).
+An automated Python scraper and match stream viewer for [rdaily.live/sports/football](https://rdaily.live/sports/football) using Playwright with built-in adblocking (**uBlock Origin**).
 
 ---
 
-## ⚡ Browser Engine on Apple Silicon
+## 🛡️ Browser Engines & Adblocking
 
-By default, the scraper uses **WebKit** (`p.webkit`):
-- **Why WebKit?** On macOS Apple Silicon (M1/M2/M3/M4), WebKit directly leverages Apple's native system frameworks (Metal, CoreGraphics, CoreText), using significantly less RAM and CPU/battery compared to full Chromium instances while maintaining fast rendering.
-- **Chromium alternative**: Playwright also provides native ARM64 Chromium (`--browser chromium`), which you can toggle anytime.
+- **Chromium (Default)**: Runs with **uBlock Origin Lite** (MV3 extension).
+- **Firefox**: Runs with official signed **uBlock Origin** (`uBlock0@raymondhill.net`).
+- *(WebKit has been removed).*
+
+Both engines run with a persistent profile so uBlock Origin blocks all ads, popups, and malicious redirects on `rdaily.live` and streaming hosts like `hls.st`.
 
 ---
 
@@ -17,33 +19,76 @@ By default, the scraper uses **WebKit** (`p.webkit`):
 ### 1. Set Up the Virtual Environment
 
 ```bash
-# Create virtual environment (already set up in this directory)
+# Create and activate virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Install Playwright browser binaries (WebKit and Chromium)
-playwright install webkit chromium
+# Install Playwright browser binaries (Chromium and Firefox)
+playwright install chromium firefox
 ```
 
-### 2. Run the Scraper
+---
+
+## 🚀 Unified Pipeline (Single Command Execution)
+
+To run the entire workflow:
 
 ```bash
-# Run in default optimized headless WebKit mode
 source .venv/bin/activate
+
+# Default: Headless scraping and stream resolution, opens browser directly at stream with uBlock Origin and auto-plays
 python main.py
 
-# Run with visible browser window (headed mode)
-python main.py --headed
+# Keep the browser window visible from the beginning across all steps (overriding default headless mode)
+python main.py --visible
 
-# Run with Chromium instead of WebKit
-python main.py --browser chromium
+# Run with Firefox instead of Chromium
+python main.py --browser firefox
 
-# Custom output destination
-python main.py --output output/my_games.json
+# Custom tab wait time (in ms)
+python main.py --wait-ms 3000
 ```
+
+### What happens in this pipeline:
+1. **Step 1 (Scraper - Headless by default)**: Navigates to `rdaily.live/sports/football`, parses all tournament fixtures, and saves them to `output/football_games.json`.
+2. **Step 2 (Game Selection - Terminal Menu)**: Displays an interactive arrow-key terminal menu bounded strictly to games that are **LIVE** or starting within **10 minutes** (sorted first).
+3. **Step 3 (Stream Selection - Headless by default)**: Headlessly opens the match page, clicks the **Broadcast** tab, auto-selects if only 1 stream is available, auto-picks the `PT` stream (or prompts via terminal if no PT stream exists), and resolves the stream URL.
+4. **Step 4 (Browser Playback with uBlock Origin)**: Launches the browser window directly with legitimate Referer headers, enables uBlock Origin to eliminate ads and popups, auto-clicks the center **Play** button, and keeps the stream active.
+
+---
+
+## 🛠️ Standalone Scripts
+
+You can also run any step independently:
+
+* **Scraper only**:
+  ```bash
+  python src/scraper.py
+  python src/scraper.py --browser firefox
+  ```
+* **Game Selector only**:
+  ```bash
+  python src/select_game.py
+  python src/select_game.py --browser firefox
+  ```
+* **Stream Selector only** (for a specific match URL):
+  ```bash
+  python src/select_stream.py https://rdaily.live/match/football/WOq36LXO
+  python src/select_stream.py https://rdaily.live/match/football/WOq36LXO --browser firefox
+  ```
+* **Direct Stream Player & M3U8 Extractor**:
+  ```bash
+  # Opens stream, auto-clicks play, and intercepts the .m3u8 link:
+  python src/play_stream.py https://hls.st/beta/b566614ce7dbab50ec5f5b4a142f6989
+  ```
+* **Interactive Browser Playground**:
+  ```bash
+  python src/playground.py
+  python src/playground.py --browser firefox
+  ```
 
 ---
 
@@ -52,57 +97,19 @@ python main.py --output output/my_games.json
 ```
 soccerStreams/
 ├── .venv/                      # Python virtual environment
+├── extensions/
+│   ├── ubolite/                # uBlock Origin Lite for Chromium
+│   └── firefox/                # uBlock Origin signed XPI for Firefox
 ├── requirements.txt            # Dependencies (playwright, beautifulsoup4)
-├── scraper.py                  # Core scraper & DOM parsing logic
-├── main.py                     # CLI entrypoint with formatted summary
+├── main.py                     # Unified single-browser pipeline (Root entrypoint)
+├── src/                        # Modular component scripts
+│   ├── __init__.py             # Package marker
+│   ├── scraper.py              # Step 1: Scraper & DOM parser
+│   ├── select_game.py          # Step 2: Interactive game selector
+│   ├── select_stream.py        # Step 3: Broadcast button click & PT stream picker
+│   ├── playground.py           # Browser context launcher & interactive tester
+│   └── terminal_menu.py        # Terminal arrow-key controls & interactive menus
 ├── README.md                   # Documentation
 └── output/
     └── football_games.json     # Extracted match and competition data
-```
-
----
-
-## 📊 Output Format (`output/football_games.json`)
-
-The output is formatted as JSON containing both a competition-grouped structure and a flat match list:
-
-```json
-{
-  "scraped_at": "2026-11-10T14:24:33Z",
-  "source_url": "https://rdaily.live/sports/football",
-  "browser_engine": "webkit",
-  "summary": {
-    "total_competitions": 2,
-    "total_matches": 5
-  },
-  "competitions": [
-    {
-      "tournament_id": "tph5Yujo_AuYKNfEa",
-      "region": "Europe",
-      "competition": "UEFA Champions League Women - League phase",
-      "total_matches": 2,
-      "matches": [
-        {
-          "event_id": "WOq36LXO",
-          "match_link": "/match/football/WOq36LXO",
-          "full_url": "https://rdaily.live/match/football/WOq36LXO",
-          "status": "notstarted",
-          "status_label": "NS",
-          "time_or_score": "17:45",
-          "home_team": {
-            "name": "Hacken W",
-            "logo": "https://www.flashscore.com/res/image/data/AkyUYRle-SU3IbkKJ.png"
-          },
-          "away_team": {
-            "name": "Chelsea W",
-            "logo": "https://www.flashscore.com/res/image/data/ltBbMPU0-dQ3CHKf1.png"
-          },
-          "competition": "UEFA Champions League Women - League phase",
-          "region": "Europe",
-          "tournament_id": "tph5Yujo_AuYKNfEa"
-        }
-      ]
-    }
-  ]
-}
 ```
