@@ -52,42 +52,26 @@ async def _wait_and_extract_html(page: Page, timeout_ms: int = 30000) -> str:
 
 
 class FootballScraper:
-    """Scraper for football matches on rdaily.live using Playwright.
-
-    Default browser engine is Chromium. Firefox is also supported.
-    """
+    """Scraper for football matches on rdaily.live using Playwright (Chromium)."""
 
     def __init__(
         self,
-        browser_type: str = "chromium",
         headless: bool = True,
         timeout_ms: int = 30000,
         live_only: bool = False,
+        **kwargs,
     ):
         self.target_url = TARGET_URL
-        self.browser_type = browser_type.lower()
+        self.browser_type = "chromium"
         self.headless = headless
         self.timeout_ms = timeout_ms
         self.live_only = live_only
 
     async def fetch_page_html(self) -> str:
-        """Launches browser, navigates to football page, waits for cards to hydrate and returns HTML."""
+        """Launches Chromium, navigates to football page, waits for cards to hydrate and returns HTML."""
         async with async_playwright() as p:
-            if self.browser_type == "chromium":
-                browser_launcher = p.chromium
-            elif self.browser_type == "firefox":
-                browser_launcher = p.firefox
-            else:
-                raise ValueError(
-                    f"Unsupported browser engine: {self.browser_type}. Use 'chromium' or 'firefox'."
-                )
-
-            logger.info(
-                f"Launching {self.browser_type.upper()} (headless={self.headless})..."
-            )
-            browser: Browser = await browser_launcher.launch(
-                headless=self.headless
-            )
+            logger.info(f"Launching CHROMIUM (headless={self.headless})...")
+            browser: Browser = await p.chromium.launch(headless=self.headless)
 
             context = await browser.new_context(
                 viewport={"width": 1280, "height": 800},
@@ -346,12 +330,11 @@ async def main():
     import argparse
     parser = argparse.ArgumentParser(description="Scrape football matches from rdaily.live.")
     parser.add_argument("--headed", action="store_true", help="Run browser in visible mode.")
-    parser.add_argument("--browser", choices=["chromium", "firefox"], default="chromium", help="Browser engine (default: chromium).")
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT_FILE), help="Output JSON path.")
     parser.add_argument("--live", action="store_true", help="Only scrape live matches.")
     args = parser.parse_args()
 
-    scraper = FootballScraper(browser_type=args.browser, headless=not args.headed, live_only=args.live)
+    scraper = FootballScraper(headless=not args.headed, live_only=args.live)
     data = await scraper.run(output_file=Path(args.output))
     summary = data.get("summary", {})
     print(f"\n✅ Done: Scraped {summary.get('total_matches', 0)} matches across {summary.get('total_competitions', 0)} competitions.")

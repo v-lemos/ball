@@ -19,6 +19,7 @@ DEFAULT_DATA_FILE = PROJECT_ROOT / "output" / "football_games.json"
 from playground import launch_browser_context, reveal_window
 from terminal_menu import interactive_select
 from play_stream import auto_play_jwplayer, extract_jwplayer_source
+from player_launcher import play_stream_with_mpv
 
 logging.basicConfig(
     level=logging.INFO,
@@ -277,15 +278,14 @@ async def navigate_and_play_stream(
 
 async def resolve_stream(
     match_url: str,
-    browser_type: str = "chromium",
     post_click_wait_ms: int = 2500,
     headless: bool = True,
+    **kwargs,
 ) -> Optional[Dict[str, str]]:
-    """Resolves stream options from match page (headless by default, or headed if requested)."""
+    """Resolves stream options from match page using Chromium (headless by default)."""
     logger.info(f"Resolving stream (headless={headless}) for: {match_url}...")
     async with async_playwright() as p:
-        launcher = p.chromium if browser_type.lower() == "chromium" else p.firefox
-        browser = await launcher.launch(headless=headless)
+        browser = await p.chromium.launch(headless=headless)
         page = await browser.new_page()
 
         await page.goto(match_url, wait_until="domcontentloaded")
@@ -358,29 +358,33 @@ async def play_stream_in_browser(
 
 async def select_and_open_stream(
     match_url: str,
-    browser_type: str = "chromium",
     use_adblock: bool = True,
     post_click_wait_ms: int = 2500,
+    visible: bool = False,
+    **kwargs,
 ):
-    """Resolves a stream from the match page and opens it in the browser."""
+    """Resolves a stream from the match page headlessly and streams it in MPV via local HLS relay."""
+    is_headless = not visible
     selected = await resolve_stream(
         match_url=match_url,
-        browser_type=browser_type,
         post_click_wait_ms=post_click_wait_ms,
+        headless=is_headless,
     )
     if not selected:
         return
-    await play_stream_in_browser(
-        stream=selected,
+
+    await play_stream_with_mpv(
+        stream_url=selected["url"],
         match_url=match_url,
-        browser_type=browser_type,
         use_adblock=use_adblock,
+        headless=is_headless,
+        match_title=selected.get("name", "SoccerStreams Live"),
     )
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Select and open the best stream for a football match on rdaily.live."
+        description="Select and open the best stream for a football match in MPV via headless relay."
     )
     parser.add_argument(
         "match_url",
@@ -389,16 +393,15 @@ def main():
         help="URL of the match page (e.g., https://rdaily.live/match/football/WOq36LXO).",
     )
     parser.add_argument(
-        "--browser",
-        "-b",
-        choices=["chromium", "firefox"],
-        default="chromium",
-        help="Browser engine to use (default: chromium).",
+        "--visible",
+        "--headed",
+        action="store_true",
+        help="Keep browser window visible (default: headless=True).",
     )
     parser.add_argument(
         "--no-adblock",
         action="store_true",
-        help="Disable uBlock Origin.",
+        help="Disable uBlock Origin Lite.",
     )
     parser.add_argument(
         "--wait-ms",
@@ -434,9 +437,9 @@ def main():
         asyncio.run(
             select_and_open_stream(
                 match_url=url,
-                browser_type=args.browser,
                 use_adblock=not args.no_adblock,
                 post_click_wait_ms=args.wait_ms,
+                visible=args.visible,
             )
         )
     except KeyboardInterrupt:

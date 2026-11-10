@@ -265,16 +265,9 @@ def main():
         help="The direct stream URL to open (e.g. https://hls.st/beta/...).",
     )
     parser.add_argument(
-        "--browser",
-        "-b",
-        choices=["chromium", "firefox"],
-        default="chromium",
-        help="Browser engine to use (default: chromium).",
-    )
-    parser.add_argument(
         "--no-adblock",
         action="store_true",
-        help="Disable uBlock Origin.",
+        help="Disable uBlock Origin Lite.",
     )
 
     args = parser.parse_args()
@@ -283,7 +276,6 @@ def main():
         asyncio.run(
             open_and_play_stream(
                 stream_url=args.stream_url,
-                browser_type=args.browser,
                 use_adblock=not args.no_adblock,
             )
         )

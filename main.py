@@ -9,11 +9,11 @@ DEFAULT_OUTPUT_FILE = ROOT_DIR / "output" / "football_games.json"
 from src.playground import launch_browser_context
 from src.scraper import FootballScraper
 from src.select_game import prompt_game_selection
-from src.select_stream import resolve_stream_headless, play_stream_in_browser
+from src.select_stream import resolve_stream_headless
+from src.player_launcher import play_stream_with_mpv
 
 
 async def run_unified_flow(
-    browser_type: str = "chromium",
     use_adblock: bool = True,
     output_file: Path = DEFAULT_OUTPUT_FILE,
     post_click_wait_ms: int = 2500,
@@ -23,16 +23,16 @@ async def run_unified_flow(
 
     print("\n" + "=" * 65)
     print(" ⚽ Football Stream Pipeline")
-    print(f" Browser:  {browser_type.upper()}")
-    print(f" Mode:     {'Always Visible (Headed)' if visible else 'Headless until Play (Default)'}")
-    print(f" Adblock:  {'uBlock Origin (Enabled 🛡️)' if use_adblock else 'Disabled'}")
+    print(f" Browser:  CHROMIUM (headless={is_headless})")
+    print(f" Player:   MPV")
+    print(f" Adblock:  {'uBlock Origin Lite (Enabled 🛡️)' if use_adblock else 'Disabled'}")
     print("=" * 65 + "\n")
 
     # ---------------------------------------------------------
     # STEP 1: SCRAPE MATCHES
     # ---------------------------------------------------------
     print(f"🔍 Step 1: Scraping football matches (headless={is_headless})...")
-    scraper = FootballScraper(browser_type=browser_type, headless=is_headless)
+    scraper = FootballScraper(headless=is_headless)
     data = await scraper.run(output_file=output_file)
     matches = data.get("matches_flat", [])
 
@@ -62,7 +62,6 @@ async def run_unified_flow(
     print(f"\n📡 Step 3: Resolving broadcast stream (headless={is_headless})...")
     selected_stream = await resolve_stream_headless(
         match_url=match_url,
-        browser_type=browser_type,
         post_click_wait_ms=post_click_wait_ms,
         headless=is_headless,
     )
@@ -72,38 +71,33 @@ async def run_unified_flow(
         return
 
     # ---------------------------------------------------------
-    # STEP 4: OPEN BROWSER DIRECTLY TO PLAY STREAM
+    # STEP 4: PLAY STREAM IN MPV (VIA HEADLESS HLS RELAY)
     # ---------------------------------------------------------
-    print("\n🎬 Step 4: Launching stream player in browser...")
-    await play_stream_in_browser(
-        stream=selected_stream,
+    match_title = f"{home} vs {away}"
+    print(f"\n🎬 Step 4: Launching MPV via HLS relay (headless={is_headless})...")
+    await play_stream_with_mpv(
+        stream_url=selected_stream["url"],
         match_url=match_url,
-        browser_type=browser_type,
         use_adblock=use_adblock,
+        headless=is_headless,
+        match_title=match_title,
     )
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run all steps: scrape (headless), game select, stream resolve (headless), and open browser at stream."
+        description="Run all steps headlessly in Chromium (scrape, game select, stream resolve) and stream in MPV."
     )
     parser.add_argument(
         "--visible",
         "--headed",
         action="store_true",
-        help="Keep browser window visible from the beginning across all steps (overrides default headless=True).",
-    )
-    parser.add_argument(
-        "--browser",
-        "-b",
-        choices=["chromium", "firefox"],
-        default="chromium",
-        help="Browser engine to use (default: chromium).",
+        help="Keep browser window visible across all steps (default: headless=True).",
     )
     parser.add_argument(
         "--no-adblock",
         action="store_true",
-        help="Disable uBlock Origin in browser.",
+        help="Disable uBlock Origin Lite in Chromium.",
     )
     parser.add_argument(
         "--wait-ms",
@@ -123,7 +117,6 @@ def main():
     try:
         asyncio.run(
             run_unified_flow(
-                browser_type=args.browser,
                 use_adblock=not args.no_adblock,
                 output_file=Path(args.output),
                 post_click_wait_ms=args.wait_ms,

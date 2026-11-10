@@ -14,7 +14,8 @@ if str(SRC_DIR) not in sys.path:
 DEFAULT_DATA_FILE = PROJECT_ROOT / "output" / "football_games.json"
 
 from scraper import FootballScraper
-from select_stream import resolve_stream_headless, play_stream_in_browser
+from select_stream import resolve_stream_headless
+from player_launcher import play_stream_with_mpv
 from terminal_menu import interactive_game_menu
 
 
@@ -120,16 +121,17 @@ def prompt_game_selection(matches: List[Dict[str, Any]]) -> Optional[Dict[str, A
 
 
 async def run_game_selection(
-    browser_type: str = "chromium",
     use_adblock: bool = True,
     data_file: Path = DEFAULT_DATA_FILE,
     force_fetch: bool = False,
+    visible: bool = False,
 ):
+    is_headless = not visible
     if not force_fetch and data_file.exists():
         with open(data_file, "r", encoding="utf-8") as f:
             data = json.load(f)
     else:
-        scraper = FootballScraper(browser_type=browser_type, headless=True)
+        scraper = FootballScraper(headless=is_headless)
         data = await scraper.run(output_file=data_file)
 
     matches = data.get("matches_flat", [])
@@ -151,21 +153,22 @@ async def run_game_selection(
 
     selected_stream = await resolve_stream_headless(
         match_url=target_url,
-        browser_type=browser_type,
+        headless=is_headless,
     )
 
     if selected_stream:
-        await play_stream_in_browser(
-            stream=selected_stream,
+        await play_stream_with_mpv(
+            stream_url=selected_stream["url"],
             match_url=target_url,
-            browser_type=browser_type,
             use_adblock=use_adblock,
+            headless=is_headless,
+            match_title=f"{home} vs {away}",
         )
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Select and watch live or upcoming football games from rdaily.live."
+        description="Select and watch live or upcoming football games in MPV from rdaily.live."
     )
     parser.add_argument(
         "--file",
@@ -179,16 +182,15 @@ def main():
         help="Force a fresh scrape from rdaily.live before showing selection.",
     )
     parser.add_argument(
-        "--browser",
-        "-b",
-        choices=["chromium", "firefox"],
-        default="chromium",
-        help="Browser to open the match stream with (default: chromium).",
+        "--visible",
+        "--headed",
+        action="store_true",
+        help="Keep browser window visible (default: headless=True).",
     )
     parser.add_argument(
         "--no-adblock",
         action="store_true",
-        help="Disable uBlock Origin when opening the stream.",
+        help="Disable uBlock Origin Lite when resolving the stream.",
     )
 
     args = parser.parse_args()
@@ -196,10 +198,10 @@ def main():
     try:
         asyncio.run(
             run_game_selection(
-                browser_type=args.browser,
                 use_adblock=not args.no_adblock,
                 data_file=Path(args.file),
                 force_fetch=args.fetch,
+                visible=args.visible,
             )
         )
     except KeyboardInterrupt:
