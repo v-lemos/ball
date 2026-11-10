@@ -1,0 +1,48 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Editor & IDE directories
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Playwright & test artifacts
+.playwright/
+test-results/
+playwright-report/
+blob-report/
+.chrome_profile/
+temp_chrome_profile/
+.firefox_profile/
+
+# Logs & scratch
+*.log
+scratch/
+
+# Scraped output files (keep the directory via .gitkeep)
+output/
+output/*
