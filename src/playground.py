@@ -1,4 +1,3 @@
-import argparse
 import asyncio
 import io
 from pathlib import Path
@@ -16,6 +15,8 @@ SRC_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SRC_DIR.parent
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
+
+from cli_args import create_parser
 
 EXTENSION_DIR_CHROME = PROJECT_ROOT / "extensions" / "ubolite"
 PROFILE_DIR_CHROME = PROJECT_ROOT / ".chrome_profile"
@@ -152,27 +153,24 @@ async def launch_playground(url: str, disable_adblock: bool):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Launch an interactive browser playground for rdaily.live (Chromium)."
-    )
-    parser.add_argument(
+    parser = create_parser(
+        "Launch an interactive browser playground for rdaily.live (Chromium).",
         "url",
-        nargs="?",
-        default=DEFAULT_URL,
-        help=f"Target URL to open (default: {DEFAULT_URL})",
-    )
-    parser.add_argument(
-        "--no-adblock",
-        action="store_true",
-        help="Disable uBlock Origin Lite.",
+        "no_adblock",
+        "sport",
     )
 
     args = parser.parse_args()
+    if args.url:
+        target_url = args.url
+    else:
+        from scraper import get_sport_url
+        target_url = get_sport_url(args.sport)
 
     try:
         asyncio.run(
             launch_playground(
-                url=args.url,
+                url=target_url,
                 disable_adblock=args.no_adblock,
             )
         )

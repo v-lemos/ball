@@ -1,4 +1,3 @@
-import argparse
 import asyncio
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -16,7 +15,13 @@ if str(SRC_DIR) not in sys.path:
 
 DEFAULT_DATA_FILE = PROJECT_ROOT / "output" / "football_games.json"
 
-from scraper import FootballScraper
+from cli_args import create_parser
+from scraper import (
+    DEFAULT_SPORT,
+    FootballScraper,
+    get_default_output_file,
+    normalize_sport,
+)
 from select_stream import get_match_streams, get_default_stream_index, resolve_stream_headless
 from player_launcher import play_interactive_stream_session, play_stream_with_mpv
 from terminal_menu import interactive_game_menu, interactive_select
@@ -296,18 +301,21 @@ def prompt_game_selection(
 
 async def run_game_selection(
     use_adblock: bool = True,
-    data_file: Path = DEFAULT_DATA_FILE,
+    data_file: Optional[Path] = None,
     force_fetch: bool = False,
     visible: bool = False,
     team: Optional[str] = None,
+    sport: str = DEFAULT_SPORT,
 ):
     is_headless = not visible
-    if not force_fetch and data_file.exists():
-        with open(data_file, "r", encoding="utf-8") as f:
+    sport_slug = normalize_sport(sport)
+    target_file = data_file or get_default_output_file(sport_slug)
+    if not force_fetch and target_file.exists():
+        with open(target_file, "r", encoding="utf-8") as f:
             data = json.load(f)
     else:
-        scraper = FootballScraper(headless=is_headless)
-        data = await scraper.run(output_file=data_file)
+        scraper = FootballScraper(headless=is_headless, sport=sport_slug)
+        data = await scraper.run(output_file=target_file)
 
     matches = data.get("matches_flat", [])
     if not matches:
@@ -344,37 +352,14 @@ async def run_game_selection(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Select and watch live or upcoming football games in MPV from rdaily.live."
-    )
-    parser.add_argument(
-        "--file",
-        type=str,
-        default=str(DEFAULT_DATA_FILE),
-        help="Path to JSON file with scraped games (default: output/football_games.json).",
-    )
-    parser.add_argument(
-        "--fetch",
-        action="store_true",
-        help="Force a fresh scrape from rdaily.live before showing selection.",
-    )
-    parser.add_argument(
-        "--visible",
-        "--headed",
-        action="store_true",
-        help="Keep browser window visible (default: headless=True).",
-    )
-    parser.add_argument(
-        "--no-adblock",
-        action="store_true",
-        help="Disable uBlock Origin Lite when resolving the stream.",
-    )
-    parser.add_argument(
-        "-t",
-        "--team",
-        type=str,
-        default=None,
-        help="Auto-select match containing this team name (fuzzy match).",
+    parser = create_parser(
+        "Select and watch live or upcoming football games in MPV from rdaily.live.",
+        "file",
+        "fetch",
+        "visible",
+        "no_adblock",
+        "team",
+        "sport",
     )
 
     args = parser.parse_args()
@@ -383,10 +368,11 @@ def main():
         asyncio.run(
             run_game_selection(
                 use_adblock=not args.no_adblock,
-                data_file=Path(args.file),
+                data_file=Path(args.file) if args.file else None,
                 force_fetch=args.fetch,
                 visible=args.visible,
                 team=args.team,
+                sport=args.sport,
             )
         )
     except KeyboardInterrupt:

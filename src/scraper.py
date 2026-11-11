@@ -15,7 +15,30 @@ PROJECT_ROOT = SRC_DIR.parent
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-DEFAULT_OUTPUT_FILE = PROJECT_ROOT / "output" / "football_games.json"
+from cli_args import DEFAULT_SPORT, create_parser
+
+BASE_URL = "https://rdaily.live"
+
+
+def normalize_sport(sport: Optional[str]) -> str:
+    """Normalizes a sport route slug (e.g. '/basketball' -> 'basketball'), defaulting to 'football'."""
+    cleaned = (sport or DEFAULT_SPORT).strip().strip("/").lower()
+    if cleaned.startswith("sports/"):
+        cleaned = cleaned[len("sports/"):].strip("/")
+    return cleaned or DEFAULT_SPORT
+
+
+def get_sport_url(sport: str = DEFAULT_SPORT) -> str:
+    """Returns the rdaily.live listings URL for the given sport."""
+    return f"{BASE_URL}/sports/{normalize_sport(sport)}"
+
+
+def get_default_output_file(sport: str = DEFAULT_SPORT) -> Path:
+    """Returns the default output JSON path for the given sport."""
+    return PROJECT_ROOT / "output" / f"{normalize_sport(sport)}_games.json"
+
+
+DEFAULT_OUTPUT_FILE = get_default_output_file(DEFAULT_SPORT)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,8 +47,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("football_scraper")
 
-BASE_URL = "https://rdaily.live"
-TARGET_URL = f"{BASE_URL}/sports/football"
+TARGET_URL = get_sport_url(DEFAULT_SPORT)
 
 
 async def _wait_and_extract_html(page: Page, timeout_ms: int = 30000) -> str:
@@ -59,9 +81,11 @@ class FootballScraper:
         headless: bool = True,
         timeout_ms: int = 30000,
         live_only: bool = False,
+        sport: str = DEFAULT_SPORT,
         **kwargs,
     ):
-        self.target_url = TARGET_URL
+        self.sport = normalize_sport(sport)
+        self.target_url = get_sport_url(self.sport)
         self.browser_type = "chromium"
         self.headless = headless
         self.timeout_ms = timeout_ms
@@ -295,7 +319,7 @@ class FootballScraper:
         html = await self.fetch_page_html()
         data = self.parse_football_data(html)
 
-        target_out = output_file or DEFAULT_OUTPUT_FILE
+        target_out = output_file or get_default_output_file(self.sport)
         target_out.parent.mkdir(parents=True, exist_ok=True)
         with open(target_out, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -308,16 +332,17 @@ async def scrape_football_with_page(
     page: Page,
     output_file: Optional[Path] = None,
     timeout_ms: int = 30000,
+    sport: str = DEFAULT_SPORT,
 ) -> Dict[str, Any]:
-    """Scrapes football matches using an existing, already-open Playwright Page."""
-    logger.info(f"Navigating existing page to {TARGET_URL}...")
-    await page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+    """Scrapes matches using an existing, already-open Playwright Page."""
+    scraper = FootballScraper(timeout_ms=timeout_ms, sport=sport)
+    logger.info(f"Navigating existing page to {scraper.target_url}...")
+    await page.goto(scraper.target_url, wait_until="domcontentloaded", timeout=timeout_ms)
 
     html = await _wait_and_extract_html(page, timeout_ms)
-    scraper = FootballScraper(timeout_ms=timeout_ms)
     data = scraper.parse_football_data(html)
 
-    target_out = output_file or DEFAULT_OUTPUT_FILE
+    target_out = output_file or get_default_output_file(scraper.sport)
     target_out.parent.mkdir(parents=True, exist_ok=True)
     with open(target_out, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -327,18 +352,22 @@ async def scrape_football_with_page(
 
 
 async def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="Scrape football matches from rdaily.live.")
-    parser.add_argument("--headed", action="store_true", help="Run browser in visible mode.")
-    parser.add_argument("--output", default=str(DEFAULT_OUTPUT_FILE), help="Output JSON path.")
-    parser.add_argument("--live", action="store_true", help="Only scrape live matches.")
+    parser = create_parser(
+        "Scrape football matches from rdaily.live.",
+        "visible",
+        "output",
+        "live",
+        "sport",
+    )
     args = parser.parse_args()
 
-    scraper = FootballScraper(headless=not args.headed, live_only=args.live)
-    data = await scraper.run(output_file=Path(args.output))
+    sport = normalize_sport(args.sport)
+    output_path = Path(args.output) if args.output else get_default_output_file(sport)
+    scraper = FootballScraper(headless=not args.visible, live_only=args.live, sport=sport)
+    data = await scraper.run(output_file=output_path)
     summary = data.get("summary", {})
     print(f"\n✅ Done: Scraped {summary.get('total_matches', 0)} matches across {summary.get('total_competitions', 0)} competitions.")
-    print(f"📁 Saved to: {Path(args.output).resolve()}\n")
+    print(f"📁 Saved to: {output_path.resolve()}\n")
 
 
 if __name__ == "__main__":

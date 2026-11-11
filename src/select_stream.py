@@ -1,4 +1,3 @@
-import argparse
 import asyncio
 import logging
 from pathlib import Path
@@ -16,6 +15,7 @@ if str(SRC_DIR) not in sys.path:
 
 DEFAULT_DATA_FILE = PROJECT_ROOT / "output" / "football_games.json"
 
+from cli_args import create_parser
 from playground import launch_browser_context, reveal_window
 from terminal_menu import interactive_select
 from play_stream import auto_play_jwplayer, extract_jwplayer_source
@@ -411,31 +411,12 @@ async def select_and_open_stream(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Select and open the best stream for a football match in MPV via headless relay."
-    )
-    parser.add_argument(
+    parser = create_parser(
+        "Select and open the best stream for a football match in MPV via headless relay.",
         "match_url",
-        nargs="?",
-        default=None,
-        help="URL of the match page (e.g., https://rdaily.live/match/football/WOq36LXO).",
-    )
-    parser.add_argument(
-        "--visible",
-        "--headed",
-        action="store_true",
-        help="Keep browser window visible (default: headless=True).",
-    )
-    parser.add_argument(
-        "--no-adblock",
-        action="store_true",
-        help="Disable uBlock Origin Lite.",
-    )
-    parser.add_argument(
-        "--wait-ms",
-        type=int,
-        default=2500,
-        help="Milliseconds to wait after clicking the Broadcast tab button (default: 2500).",
+        "visible",
+        "no_adblock",
+        "wait_ms",
     )
 
     args = parser.parse_args()

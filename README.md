@@ -58,15 +58,13 @@ source .venv/bin/activate
 python main.py
 
 # Auto-select a match by team name (fuzzy matching, e.g. "bayern", "porto", "chelsea")
-python main.py --team bayern
-# Or shorthand:
-python main.py -t porto
+python main.py -t bayern
 
 # Optional: Keep the browser window visible across all steps
-python main.py --visible
+python main.py -v
 
 # Optional: Custom tab wait time (in ms)
-python main.py --wait-ms 3000
+python main.py -w 3000
 ```
 
 ### What happens in this pipeline:

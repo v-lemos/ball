@@ -1,4 +1,3 @@
-import argparse
 import asyncio
 from pathlib import Path
 import sys
@@ -7,8 +6,14 @@ from typing import Optional
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_FILE = ROOT_DIR / "output" / "football_games.json"
 
+from src.cli_args import DEFAULT_WAIT_MS, create_parser
 from src.playground import launch_browser_context
-from src.scraper import FootballScraper
+from src.scraper import (
+    DEFAULT_SPORT,
+    FootballScraper,
+    get_default_output_file,
+    normalize_sport,
+)
 from src.select_game import prompt_game_selection
 from src.select_stream import get_match_streams, get_default_stream_index, resolve_stream_headless
 from src.player_launcher import play_interactive_stream_session, play_stream_with_mpv
@@ -16,18 +21,23 @@ from src.player_launcher import play_interactive_stream_session, play_stream_wit
 
 async def run_unified_flow(
     use_adblock: bool = True,
-    output_file: Path = DEFAULT_OUTPUT_FILE,
-    post_click_wait_ms: int = 2500,
+    output_file: Optional[Path] = None,
+    post_click_wait_ms: int = DEFAULT_WAIT_MS,
     visible: bool = False,
     team: Optional[str] = None,
+    sport: str = DEFAULT_SPORT,
 ):
     is_headless = not visible
+    sport_slug = normalize_sport(sport)
+    target_output = output_file or get_default_output_file(sport_slug)
 
     print("\n" + "=" * 65)
     print(" ⚽ Football Stream Pipeline")
     print(f" Browser:  Chromium (headless={is_headless})")
     print(f" Player:   mpv")
     print(f" Adblock:  {'uBlock Origin Lite' if use_adblock else 'Disabled'}")
+    if sport_slug != DEFAULT_SPORT:
+        print(f" Sport:    {sport_slug} (Testing)")
     if team:
         print(f" Team:     {team} (Auto-select)")
     print("=" * 65 + "\n")
@@ -35,9 +45,9 @@ async def run_unified_flow(
     # ---------------------------------------------------------
     # STEP 1: SCRAPE MATCHES
     # ---------------------------------------------------------
-    print(f"🔍 Step 1: Scraping football matches (headless={is_headless})...")
-    scraper = FootballScraper(headless=is_headless)
-    data = await scraper.run(output_file=output_file)
+    print(f"🔍 Step 1: Scraping {sport_slug} matches (headless={is_headless})...")
+    scraper = FootballScraper(headless=is_headless, sport=sport_slug)
+    data = await scraper.run(output_file=target_output)
     matches = data.get("matches_flat", [])
 
     if not matches:
@@ -99,38 +109,14 @@ async def run_unified_flow(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Run all steps headlessly in Chromium (scrape, game select, stream resolve) and stream in mpv."
-    )
-    parser.add_argument(
-        "--visible",
-        "--headed",
-        action="store_true",
-        help="Keep browser window visible across all steps (default: headless=True).",
-    )
-    parser.add_argument(
-        "--no-adblock",
-        action="store_true",
-        help="Disable uBlock Origin Lite in Chromium.",
-    )
-    parser.add_argument(
-        "--wait-ms",
-        type=int,
-        default=2500,
-        help="Milliseconds to wait after clicking Broadcast tab (default: 2500).",
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        default=str(DEFAULT_OUTPUT_FILE),
-        help="Path to save scraped games (default: output/football_games.json).",
-    )
-    parser.add_argument(
-        "-t",
-        "--team",
-        type=str,
-        default=None,
-        help="Auto-select match containing this team name (fuzzy match).",
+    parser = create_parser(
+        "Run all steps headlessly in Chromium (scrape, game select, stream resolve) and stream in mpv.",
+        "visible",
+        "no_adblock",
+        "wait_ms",
+        "output",
+        "team",
+        "sport",
     )
 
     args = parser.parse_args()
@@ -139,10 +125,11 @@ def main():
         asyncio.run(
             run_unified_flow(
                 use_adblock=not args.no_adblock,
-                output_file=Path(args.output),
+                output_file=Path(args.output) if args.output else None,
                 post_click_wait_ms=args.wait_ms,
                 visible=args.visible,
                 team=args.team,
+                sport=args.sport,
             )
         )
     except KeyboardInterrupt:

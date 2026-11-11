@@ -1,4 +1,3 @@
-import argparse
 import asyncio
 import logging
 from pathlib import Path
@@ -12,6 +11,7 @@ PROJECT_ROOT = SRC_DIR.parent
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from cli_args import create_parser
 from playground import launch_browser_context
 
 logging.basicConfig(
@@ -255,19 +255,10 @@ async def open_and_play_stream(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Open a stream URL (e.g. hls.st), auto-click the play button, and extract the M3U8 link."
-    )
-    parser.add_argument(
+    parser = create_parser(
+        "Open a stream URL (e.g. hls.st), auto-click the play button, and extract the M3U8 link.",
         "stream_url",
-        nargs="?",
-        default="https://hls.st/beta/b566614ce7dbab50ec5f5b4a142f6989",
-        help="The direct stream URL to open (e.g. https://hls.st/beta/...).",
-    )
-    parser.add_argument(
-        "--no-adblock",
-        action="store_true",
-        help="Disable uBlock Origin Lite.",
+        "no_adblock",
     )
 
     args = parser.parse_args()
