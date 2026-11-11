@@ -42,12 +42,14 @@ def parse_match_time(time_str: str, now: datetime) -> Optional[Tuple[datetime, f
 def categorize_matches(matches: List[Dict[str, Any]]):
     """Categorizes matches into:
 
-    1. Selectable: LIVE or starting in <= 10 minutes (sorted first)
-    2. Upcoming: Starting in > 10 minutes
-    3. Finished: Completed matches
+    1. Live: Currently in-progress matches
+    2. Right Up: Starting in <= 10 minutes (sorted soonest first)
+    3. Upcoming: Starting in > 10 minutes (sorted soonest first)
+    4. Finished: Completed matches
     """
     now = datetime.now()
-    selectable = []
+    live = []
+    rightUp = []
     upcoming = []
     finished = []
 
@@ -61,25 +63,23 @@ def categorize_matches(matches: List[Dict[str, Any]]):
             continue
 
         if is_live:
-            selectable.append((m, 0.0, "LIVE"))
+            live.append((m, 0.0, "LIVE"))
             continue
 
         time_data = parse_match_time(time_or_score, now)
         if time_data:
             _, diff_minutes = time_data
             if diff_minutes <= 10:
-                selectable.append((m, diff_minutes, time_or_score))
+                rightUp.append((m, diff_minutes, time_or_score))
             else:
                 upcoming.append((m, diff_minutes))
         else:
             upcoming.append((m, 9999.0))
 
-    selectable.sort(
-        key=lambda item: (0 if item[2] == "LIVE" else 1, item[1])
-    )
+    rightUp.sort(key=lambda item: item[1])
     upcoming.sort(key=lambda item: item[1])
 
-    return selectable, upcoming, finished
+    return live, rightUp, upcoming, finished
 
 
 def normalize_name(text: str) -> str:
@@ -248,6 +248,13 @@ def select_game_by_team(
     return None
 
 
+def _format_match_label(match: Dict[str, Any], tag: str) -> str:
+    """Formats a match entry as 'Home vs Away (tag)'."""
+    home = match.get("home_team", {}).get("name") or "TBD"
+    away = match.get("away_team", {}).get("name") or "TBD"
+    return f"{home} vs {away} ({tag})"
+
+
 def prompt_game_selection(
     matches: List[Dict[str, Any]],
     team: Optional[str] = None,
@@ -262,31 +269,20 @@ def prompt_game_selection(
         if chosen is not None:
             return chosen
 
-    selectable, upcoming, finished = categorize_matches(matches)
+    live, rightUp, upcoming, finished = categorize_matches(matches)
 
-    selectable_items = []
-    for m, _, time_tag in selectable:
-        home = m["home_team"]["name"] or "TBD"
-        away = m["away_team"]["name"] or "TBD"
-        tag = "LIVE" if time_tag == "LIVE" else time_tag
-        selectable_items.append(f"{home} vs {away} ({tag})")
-
-    upcoming_items = []
-    for m, _ in upcoming:
-        home = m["home_team"]["name"] or "TBD"
-        away = m["away_team"]["name"] or "TBD"
-        time_str = m.get("time_or_score", "")
-        upcoming_items.append(f"{home} vs {away} ({time_str})")
-
-    finished_items = []
-    for m in finished:
-        home = m["home_team"]["name"] or "TBD"
-        away = m["away_team"]["name"] or "TBD"
-        score = m.get("time_or_score", "FT")
-        finished_items.append(f"{home} vs {away} ({score})")
+    live_items = [_format_match_label(m, time_tag) for m, _, time_tag in live]
+    right_up_items = [_format_match_label(m, time_tag) for m, _, time_tag in rightUp]
+    upcoming_items = [
+        _format_match_label(m, m.get("time_or_score", "")) for m, _ in upcoming
+    ]
+    finished_items = [
+        _format_match_label(m, m.get("time_or_score", "FT")) for m in finished
+    ]
 
     selected_idx = interactive_game_menu(
-        selectable_items=selectable_items,
+        live_items=live_items,
+        right_up_items=right_up_items,
         upcoming_items=upcoming_items,
         finished_items=finished_items,
     )
@@ -294,6 +290,7 @@ def prompt_game_selection(
     if selected_idx is None:
         return None
 
+    selectable = live + rightUp
     return selectable[selected_idx][0]
 
 

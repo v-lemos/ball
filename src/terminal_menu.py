@@ -197,58 +197,64 @@ def interactive_select(
         print("\033[?25h", end="", flush=True)
 
 
+def _append_static_sections(
+    lines: List[str],
+    upcoming_items: List[str],
+    finished_items: List[str],
+) -> None:
+    """Appends non-selectable Upcoming and Finished sections to menu output lines."""
+    for heading, items in (("⏳ Upcoming:", upcoming_items), ("🏁 Finished:", finished_items)):
+        if items:
+            lines.append(f"\n{heading}")
+            for item in items:
+                lines.append(f"   {item}")
+
+
 def interactive_game_menu(
-    selectable_items: List[str],
+    live_items: List[str],
+    right_up_items: List[str],
     upcoming_items: List[str],
     finished_items: List[str],
 ) -> Optional[int]:
-    """Displays games with arrow-key navigation strictly locked to selectable items."""
-    if not selectable_items:
-        print("\033[2J\033[H", end="")
-        print("⚽ Football Matches\n")
-        print("🔴 Live & Starting Soon (≤ 10 mins):")
-        print("   (No live games or games starting in ≤ 10 mins right now)\n")
-
-        if upcoming_items:
-            print("⏳ Upcoming:")
-            for item in upcoming_items:
-                print(f"   {item}")
-            print()
-
-        if finished_items:
-            print("🏁 Finished:")
-            for item in finished_items:
-                print(f"   {item}")
-            print()
+    """Displays games with arrow-key navigation strictly locked to live and starting-soon items."""
+    total_selectable = len(live_items) + len(right_up_items)
+    if total_selectable == 0:
+        lines = ["\033[2J\033[H"]
+        lines.append("⚽ Football Matches")
+        lines.append("\n🔴 LIVE:\n   (No live games right now)")
+        lines.append("\n🟡 Starting Soon (≤ 10 mins):\n   (No games starting in ≤ 10 mins right now)")
+        _append_static_sections(lines, upcoming_items, finished_items)
+        print("\n".join(lines) + "\n", flush=True)
 
         input("Press Enter or 'q' to exit... ")
         return None
 
     selected_idx = 0
-    max_idx = len(selectable_items) - 1
+    max_idx = total_selectable - 1
+    selectable_sections = (
+        ("🔴 LIVE:", live_items),
+        ("🟡 Starting Soon (≤ 10 mins):", right_up_items),
+    )
 
     print("\033[?25l", end="", flush=True)
     try:
         while True:
             lines = ["\033[2J\033[H"]
-            lines.append("⚽ Football Matches  (Use ↑/↓ to move, ENTER to select, q to quit)\n")
-            lines.append("🔴 Live & Starting Soon:")
+            lines.append("⚽ Football Matches  (Use ↑/↓ to move, ENTER to select, q to quit)")
 
-            for i, label in enumerate(selectable_items):
-                if i == selected_idx:
-                    lines.append(f" \033[1;32m❯ {label}\033[0m")
-                else:
-                    lines.append(f"   {label}")
+            offset = 0
+            for heading, items in selectable_sections:
+                if not items:
+                    continue
+                lines.append(f"\n{heading}")
+                for i, label in enumerate(items):
+                    if offset + i == selected_idx:
+                        lines.append(f" \033[1;32m❯ {label}\033[0m")
+                    else:
+                        lines.append(f"   {label}")
+                offset += len(items)
 
-            if upcoming_items:
-                lines.append("\n⏳ Upcoming:")
-                for item in upcoming_items:
-                    lines.append(f"   {item}")
-
-            if finished_items:
-                lines.append("\n🏁 Finished:")
-                for item in finished_items:
-                    lines.append(f"   {item}")
+            _append_static_sections(lines, upcoming_items, finished_items)
 
             print("\n".join(lines), flush=True)
 
