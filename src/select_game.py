@@ -99,6 +99,30 @@ def normalize_name(text: str) -> str:
     return " ".join(text.split())
 
 
+TEAM_ALIASES: Dict[str, List[str]] = {
+    "porto": [
+        "campeão",
+        "campeao",
+        "amor minha vida",
+        "maior de portugal",
+        "azul e branco",
+        "tripeiros",
+        "tripeirada"
+    ],
+    "benfica": [
+        "rabolhos",
+        "rabolhagem",
+        "lampiões",
+        "lampioes",
+        "lampionagem",
+        "lamps",
+        "mouros",
+        "panelas",
+        "galinhas"
+    ]
+}
+
+
 def score_team_match(query: str, team_name: str) -> float:
     """Calculates a match confidence score between 0.0 and 1.0.
 
@@ -162,16 +186,42 @@ def score_team_match(query: str, team_name: str) -> float:
     return max(full_ratio, best_token_ratio)
 
 
+def resolve_team_query(query: str, threshold: float = 0.75) -> str:
+    """Resolves colloquial nicknames, slang, or their typos to canonical club search terms."""
+    norm_q = normalize_name(query)
+    if not norm_q:
+        return query
+
+    best_match = None
+    best_score = 0.0
+
+    for canonical_name, aliases in TEAM_ALIASES.items():
+        for alias in aliases:
+            norm_a = normalize_name(alias)
+            if norm_q == norm_a:
+                return canonical_name
+            # For short aliases (e.g. "fcp"), require exact match to prevent false positives
+            if len(norm_a) <= 3:
+                continue
+            score = score_team_match(norm_q, norm_a)
+            if score >= threshold and score > best_score:
+                best_score = score
+                best_match = canonical_name
+
+    return best_match if best_match else query
+
+
 def find_matching_matches(
     matches: List[Dict[str, Any]], query: str, threshold: float = 0.65
 ) -> List[Tuple[Dict[str, Any], float, str]]:
     """Returns matching games sorted by score and status priority (LIVE > upcoming > finished)."""
+    resolved_query = resolve_team_query(query)
     results = []
     for m in matches:
         home_name = m.get("home_team", {}).get("name") or ""
         away_name = m.get("away_team", {}).get("name") or ""
-        home_score = score_team_match(query, home_name)
-        away_score = score_team_match(query, away_name)
+        home_score = score_team_match(resolved_query, home_name)
+        away_score = score_team_match(resolved_query, away_name)
 
         if home_score >= away_score:
             best_score = home_score
