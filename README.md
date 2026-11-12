@@ -1,16 +1,16 @@
-# SoccerStreams Scraper & Stream Viewer
+# Ball
 
-An automated Python scraper and match stream viewer for [rdaily.live/sports/football](https://rdaily.live/sports/football) using Playwright (**Chromium** only) with built-in adblocking (**uBlock Origin Lite** MV3) and native **MPV** playback.
+A Python scraper and match stream viewer for [rdaily.live/sports/football](https://rdaily.live/sports/football) using Playwright (**Chromium** only) with built-in adblocking (**uBlock Origin Lite** MV3) and native **MPV** playback.
 
 ---
 
-## 🛡️ Browser Engine & Adblocking
+## Browser Engine & Adblocking
 
 - **Chromium**: Runs with **uBlock Origin Lite** (MV3 extension) with persistent profile to block all ads, popups, and malicious redirects on `rdaily.live` and streaming hosts.
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. System Requirements & Setup
 
@@ -47,41 +47,44 @@ playwright install chromium
 
 ---
 
-## 🚀 Unified Pipeline (Single Command Execution)
+## Unified Pipeline (Single Command Execution)
 
 To run the entire workflow:
 
 ```bash
 source .venv/bin/activate
 
-# Default: 100% headless scraping & resolution, launches directly into MPV (1080p 60fps)
+# DEFAULT RUN:
+# 100% headless scraping & resolution, launches directly into MPV (1080p 60fps)
 python main.py
 
-# Auto-select a match by team name (fuzzy matching, e.g. "bayern", "porto", "chelsea")
-python main.py -t bayern
+# OPTIONAL FLAGS:
+# Auto-select a match by team name (fuzzy matching, e.g. "porto", "portugal"...)
+python main.py -t porto
 
-# Optional: Keep the browser window visible across all steps
+# Keep the browser window visible across all steps
 python main.py -v
 
-# Optional: Show detailed pipeline steps and progress info (default: clean "Loading...")
+# Show detailed pipeline steps and progress info (default: clean "Loading..." between major steps)
 python main.py -i
 
-# Optional: Open the stream muted in mpv
+# Open the stream muted in mpv
 python main.py -m
 
-# Optional: Always show mpv player controls (OSC bar)
+# Always show mpv player controls (OSC bar)
 python main.py -c
 
-# Optional: Custom output JSON path
+# Custom output JSON path
 python main.py -o output/my_games.json
 
-# Advanced: Custom tab wait time (in ms)
+# ADVANCED FLAGS:
+# Custom tab wait time (in ms)
 python main.py --wait-ms 3000
 
-# Advanced: Sport route for testing (e.g. basketball)
+# Sport route for testing, check the actual website for available sports, write them exactly as they are in the URL
 python main.py --sport basketball
 
-# Advanced: Disable adblocker
+# Disable adblocker (no idea why you would ever want to do that)
 python main.py --no-adblock
 ```
 
