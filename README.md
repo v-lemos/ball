@@ -63,8 +63,26 @@ python main.py -t bayern
 # Optional: Keep the browser window visible across all steps
 python main.py -v
 
-# Optional: Custom tab wait time (in ms)
-python main.py -w 3000
+# Optional: Show detailed pipeline steps and progress info (default: clean "Loading...")
+python main.py -i
+
+# Optional: Open the stream muted in mpv
+python main.py -m
+
+# Optional: Always show mpv player controls (OSC bar)
+python main.py -c
+
+# Optional: Custom output JSON path
+python main.py -o output/my_games.json
+
+# Advanced: Custom tab wait time (in ms)
+python main.py --wait-ms 3000
+
+# Advanced: Sport route for testing (e.g. basketball)
+python main.py --sport basketball
+
+# Advanced: Disable adblocker
+python main.py --no-adblock
 ```
 
 ### What happens in this pipeline:
@@ -72,36 +90,6 @@ python main.py -w 3000
 2. **Step 2 (Game Selection - Terminal Menu)**: Displays an interactive arrow-key terminal menu bounded strictly to games that are **LIVE** or starting within **10 minutes** (sorted first).
 3. **Step 3 (Stream Resolution - Headless)**: Opens the match page headlessly, clicks the **Broadcast** tab, and captures all available broadcast streams in exact site order (auto-defaults to Portuguese `PT` stream if available).
 4. **Step 4 (Headless HLS Relay, MPV Playback & Interactive Switcher)**: Launches **MPV** pointing to an authenticated local HLS relay. While MPV streams, an interactive stream switcher is rendered in the terminal: use `↑`/`↓` and `ENTER` to switch between streams on command without restarting the pipeline. Closing MPV or pressing `q` cleanly exits.
-
----
-
-## 🛠️ Standalone Scripts
-
-You can also run any step independently:
-
-* **Scraper only**:
-  ```bash
-  python src/scraper.py
-  ```
-* **Game Selector only**:
-  ```bash
-  python src/select_game.py
-  # Or with team auto-selection:
-  python src/select_game.py -t bayern
-  ```
-* **Stream Selector only** (for a specific match URL):
-  ```bash
-  python src/select_stream.py https://rdaily.live/match/football/WOq36LXO
-  ```
-* **Direct Stream Player & M3U8 Extractor**:
-  ```bash
-  # Opens stream in Chromium, auto-clicks play, and intercepts the .m3u8 link:
-  python src/play_stream.py https://hls.st/beta/b566614ce7dbab50ec5f5b4a142f6989
-  ```
-* **Interactive Browser Playground**:
-  ```bash
-  python src/playground.py
-  ```
 
 ---
 

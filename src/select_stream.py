@@ -389,10 +389,22 @@ async def select_and_open_stream(
     use_adblock: bool = True,
     post_click_wait_ms: int = 2500,
     visible: bool = False,
+    mute: bool = False,
+    controls: bool = False,
+    info: bool = False,
     **kwargs,
 ):
     """Resolves a stream from the match page headlessly and streams it in MPV via local HLS relay."""
     is_headless = not visible
+
+    level = logging.INFO if info else logging.WARNING
+    logging.getLogger().setLevel(level)
+    for name in ("football_scraper", "stream_selector", "player_launcher", "stream_player"):
+        logging.getLogger(name).setLevel(level)
+
+    if not info:
+        print("Loading...", flush=True)
+
     selected = await resolve_stream(
         match_url=match_url,
         post_click_wait_ms=post_click_wait_ms,
@@ -407,6 +419,8 @@ async def select_and_open_stream(
         use_adblock=use_adblock,
         headless=is_headless,
         match_title=selected.get("name", "SoccerStreams Live"),
+        mute=mute,
+        controls=controls,
     )
 
 
@@ -417,6 +431,9 @@ def main():
         "visible",
         "no_adblock",
         "wait_ms",
+        "mute",
+        "controls",
+        "info",
     )
 
     args = parser.parse_args()
@@ -449,6 +466,9 @@ def main():
                 use_adblock=not args.no_adblock,
                 post_click_wait_ms=args.wait_ms,
                 visible=args.visible,
+                mute=args.mute,
+                controls=args.controls,
+                info=args.info,
             )
         )
     except KeyboardInterrupt:

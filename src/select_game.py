@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 from difflib import SequenceMatcher
 import json
+import logging
 from pathlib import Path
 import re
 import sys
@@ -194,7 +195,7 @@ def find_matching_matches(
 
 
 def select_game_by_team(
-    matches: List[Dict[str, Any]], query: str
+    matches: List[Dict[str, Any]], query: str, info: bool = True
 ) -> Optional[Dict[str, Any]]:
     """Attempts to auto-select a game by matching home or away team with the given query.
 
@@ -202,8 +203,9 @@ def select_game_by_team(
     """
     candidates = find_matching_matches(matches, query)
     if not candidates:
-        print(f"⚠️  No matches found for team query '{query}'.")
-        print("Falling back to full match selection menu...\n")
+        if info:
+            print(f"⚠️  No matches found for team query '{query}'.")
+            print("Falling back to full match selection menu...\n")
         return None
 
     top_match, top_score, top_team = candidates[0]
@@ -219,12 +221,14 @@ def select_game_by_team(
         time_str = top_match.get("time_or_score", "")
 
         if status == "finished":
-            print(f"\n⚠️  Found match for '{query}': {home} vs {away}, but it is already FINISHED ({time_str or 'FT'}).")
-            print("Falling back to full match selection menu...\n")
+            if info:
+                print(f"\n⚠️  Found match for '{query}': {home} vs {away}, but it is already FINISHED ({time_str or 'FT'}).")
+                print("Falling back to full match selection menu...\n")
             return None
 
         tag = "LIVE" if is_live else f"Starts at {time_str}"
-        print(f"\n🎯 Auto-selected match for team '{query}': {home} vs {away} [{tag}] (matched '{top_team}', confidence {top_score:.0%})")
+        if info:
+            print(f"\n🎯 Auto-selected match for team '{query}': {home} vs {away} [{tag}] (matched '{top_team}', confidence {top_score:.0%})")
         return top_match
 
     # Multiple candidates: present menu limited to matching games
@@ -263,6 +267,7 @@ def _format_match_label(match: Dict[str, Any], tag: str) -> str:
 def prompt_game_selection(
     matches: List[Dict[str, Any]],
     team: Optional[str] = None,
+    info: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Takes a list of matches, optionally auto-selects by team name, displays the terminal menu, and returns the chosen match dict."""
     if not matches:
@@ -270,7 +275,7 @@ def prompt_game_selection(
         return None
 
     if team and team.strip():
-        chosen = select_game_by_team(matches, team.strip())
+        chosen = select_game_by_team(matches, team.strip(), info=info)
         if chosen is not None:
             return chosen
 
@@ -306,10 +311,22 @@ async def run_game_selection(
     visible: bool = False,
     team: Optional[str] = None,
     sport: str = DEFAULT_SPORT,
+    mute: bool = False,
+    controls: bool = False,
+    info: bool = False,
 ):
     is_headless = not visible
     sport_slug = normalize_sport(sport)
     target_file = data_file or get_default_output_file(sport_slug)
+
+    level = logging.INFO if info else logging.WARNING
+    logging.getLogger().setLevel(level)
+    for name in ("football_scraper", "stream_selector", "player_launcher", "stream_player"):
+        logging.getLogger(name).setLevel(level)
+
+    if not info:
+        print("Loading...", flush=True)
+
     if not force_fetch and target_file.exists():
         with open(target_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -322,7 +339,7 @@ async def run_game_selection(
         print("No football matches found.")
         return
 
-    selected_match = prompt_game_selection(matches, team=team)
+    selected_match = prompt_game_selection(matches, team=team, info=info)
     if not selected_match:
         print("\nExited.")
         return
@@ -331,8 +348,11 @@ async def run_game_selection(
     away = selected_match["away_team"]["name"]
     target_url = selected_match["full_url"]
 
-    print(f"\n🚀 Selected Match: {home} vs {away}")
-    print(f"🔗 URL: {target_url}\n")
+    if info:
+        print(f"\n🚀 Selected Match: {home} vs {away}")
+        print(f"🔗 URL: {target_url}\n")
+    else:
+        print("Loading...", flush=True)
 
     streams = await get_match_streams(
         match_url=target_url,
@@ -348,6 +368,8 @@ async def run_game_selection(
             initial_index=default_idx,
             use_adblock=use_adblock,
             headless=is_headless,
+            mute=mute,
+            controls=controls,
         )
 
 
@@ -360,6 +382,9 @@ def main():
         "no_adblock",
         "team",
         "sport",
+        "mute",
+        "controls",
+        "info",
     )
 
     args = parser.parse_args()
@@ -373,6 +398,9 @@ def main():
                 visible=args.visible,
                 team=args.team,
                 sport=args.sport,
+                mute=args.mute,
+                controls=args.controls,
+                info=args.info,
             )
         )
     except KeyboardInterrupt:

@@ -147,6 +147,8 @@ class HlsRelayServer:
 def launch_mpv_process(
     stream_url: str,
     title: str = "Soccer Streams - Live",
+    mute: bool = False,
+    controls: bool = False,
 ) -> subprocess.Popen:
     """Launches mpv with clean terminal output pointing to the relay URL."""
     mpv_bin = check_mpv_installed()
@@ -154,8 +156,12 @@ def launch_mpv_process(
         mpv_bin,
         f"--title=⚽ {title}",
         "--really-quiet",
-        stream_url,
     ]
+    if mute:
+        cmd.append("--mute=yes")
+    if controls:
+        cmd.append("--script-opts-add=osc-visibility=always")
+    cmd.append(stream_url)
     log_path = PROJECT_ROOT / "output" / "mpv.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = open(log_path, "a", encoding="utf-8")
@@ -175,6 +181,8 @@ async def switch_stream(
     current_page: Optional[Any],
     current_proc: Optional[subprocess.Popen],
     timeout_sec: float = 12.0,
+    mute: bool = False,
+    controls: bool = False,
 ) -> Tuple[Optional[Any], Optional[subprocess.Popen], bool]:
     """Closes current playback and loads the new stream into MPV via HLS relay."""
     from src.play_stream import auto_play_jwplayer
@@ -230,7 +238,7 @@ async def switch_stream(
 
         # 8. Launch MPV
         stream_title = f"{match_title} - {stream.get('name', 'Stream')}"
-        proc = launch_mpv_process(relay.url, title=stream_title)
+        proc = launch_mpv_process(relay.url, title=stream_title, mute=mute, controls=controls)
 
         # 9. Verify MPV stays alive for at least 1 second
         await asyncio.sleep(1.0)
@@ -252,6 +260,8 @@ async def play_interactive_stream_session(
     initial_index: int = 0,
     use_adblock: bool = True,
     headless: bool = True,
+    mute: bool = False,
+    controls: bool = False,
 ):
     """Maintains an interactive terminal stream switcher while playing in MPV."""
     check_mpv_installed()
@@ -295,6 +305,8 @@ async def play_interactive_stream_session(
                     match_title=match_title,
                     current_page=page,
                     current_proc=player_proc,
+                    mute=mute,
+                    controls=controls,
                 )
 
                 if ok:
@@ -354,6 +366,8 @@ async def play_interactive_stream_session(
                                 match_title=match_title,
                                 current_page=page,
                                 current_proc=player_proc,
+                                mute=mute,
+                                controls=controls,
                             )
 
                             if ok:
@@ -404,6 +418,8 @@ async def play_stream_with_mpv(
     use_adblock: bool = True,
     headless: bool = True,
     match_title: str = "SoccerStreams Live",
+    mute: bool = False,
+    controls: bool = False,
     **kwargs,
 ):
     """Maintains the authenticated DDoS-Guard session via Chromium (default headless),
@@ -418,6 +434,8 @@ async def play_stream_with_mpv(
         initial_index=0,
         use_adblock=use_adblock,
         headless=headless,
+        mute=mute,
+        controls=controls,
     )
 
 

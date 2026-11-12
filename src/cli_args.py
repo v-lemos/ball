@@ -18,6 +18,30 @@ ARGUMENT_SPECS: Dict[str, ArgumentSpec] = {
             "help": "Keep browser window visible (default: headless=True).",
         },
     ),
+    "mute": (
+        ("-m",),
+        {
+            "dest": "mute",
+            "action": "store_true",
+            "help": "Open the stream muted in mpv.",
+        },
+    ),
+    "controls": (
+        ("-c",),
+        {
+            "dest": "controls",
+            "action": "store_true",
+            "help": "Always show mpv player controls (OSC bar).",
+        },
+    ),
+    "info": (
+        ("-i",),
+        {
+            "dest": "info",
+            "action": "store_true",
+            "help": "Show pipeline steps and detailed progress logs.",
+        },
+    ),
     "no_adblock": (
         ("--no-adblock",),
         {
@@ -26,7 +50,7 @@ ARGUMENT_SPECS: Dict[str, ArgumentSpec] = {
         },
     ),
     "wait_ms": (
-        ("-w",),
+        ("--wait-ms", "--wait_ms"),
         {
             "dest": "wait_ms",
             "type": int,
@@ -59,8 +83,9 @@ ARGUMENT_SPECS: Dict[str, ArgumentSpec] = {
         },
     ),
     "live": (
-        ("--live",),
+        ("-l",),
         {
+            "dest": "live",
             "action": "store_true",
             "help": "Only scrape live matches.",
         },
@@ -75,9 +100,8 @@ ARGUMENT_SPECS: Dict[str, ArgumentSpec] = {
         },
     ),
     "sport": (
-        ("-s",),
+        ("--sport",),
         {
-            "dest": "sport",
             "type": str,
             "default": DEFAULT_SPORT,
             "help": f"Sport route on rdaily.live/sports/<sport> for testing (default: {DEFAULT_SPORT}).",
