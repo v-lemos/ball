@@ -1,6 +1,7 @@
 import asyncio
 import http.server
 import logging
+import os
 from pathlib import Path
 import shutil
 import socket
@@ -149,6 +150,9 @@ def launch_mpv_process(
     title: str = "Soccer Streams - Live",
     mute: bool = False,
     controls: bool = False,
+    ipc_socket: Optional[str] = None,
+    lua_script: Optional[str] = None,
+    trigger_file: Optional[str] = None,
 ) -> subprocess.Popen:
     """Launches mpv with clean terminal output pointing to the relay URL."""
     mpv_bin = check_mpv_installed()
@@ -156,11 +160,21 @@ def launch_mpv_process(
         mpv_bin,
         f"--title=⚽ {title}",
         "--really-quiet",
+        # Buffering settings to enable deep rewind cache for instant goal/replay clipping
+        "--demuxer-max-bytes=500M",
+        "--demuxer-max-back-bytes=400M",
+        "--demuxer-seekable-cache=yes",
     ]
     if mute:
         cmd.append("--mute=yes")
     if controls:
         cmd.append("--script-opts-add=osc-visibility=always")
+    if ipc_socket:
+        cmd.append(f"--input-ipc-server={ipc_socket}")
+    if lua_script:
+        cmd.append(f"--script={lua_script}")
+    if trigger_file:
+        cmd.append(f"--script-opts-add=trigger_file={trigger_file}")
     cmd.append(stream_url)
     log_path = PROJECT_ROOT / "output" / "mpv.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,6 +197,9 @@ async def switch_stream(
     timeout_sec: float = 12.0,
     mute: bool = False,
     controls: bool = False,
+    ipc_socket: Optional[str] = None,
+    lua_script: Optional[str] = None,
+    trigger_file: Optional[str] = None,
 ) -> Tuple[Optional[Any], Optional[subprocess.Popen], bool]:
     """Closes current playback and loads the new stream into MPV via HLS relay."""
     from src.play_stream import auto_play_jwplayer
@@ -238,7 +255,15 @@ async def switch_stream(
 
         # 8. Launch MPV
         stream_title = f"{match_title} - {stream.get('name', 'Stream')}"
-        proc = launch_mpv_process(relay.url, title=stream_title, mute=mute, controls=controls)
+        proc = launch_mpv_process(
+            relay.url,
+            title=stream_title,
+            mute=mute,
+            controls=controls,
+            ipc_socket=ipc_socket,
+            lua_script=lua_script,
+            trigger_file=trigger_file,
+        )
 
         # 9. Verify MPV stays alive for at least 1 second
         await asyncio.sleep(1.0)
@@ -265,8 +290,10 @@ async def play_interactive_stream_session(
 ):
     """Maintains an interactive terminal stream switcher while playing in MPV."""
     check_mpv_installed()
+    import time
     from playwright.async_api import async_playwright
     from src.playground import launch_browser_context
+    from src.stream_recorder import StreamRecorder
     from src.terminal_menu import TerminalRawMode, get_key_nonblocking, render_stream_menu
 
     if not streams:
@@ -277,6 +304,13 @@ async def play_interactive_stream_session(
     active_idx: Optional[int] = None
     player_proc: Optional[subprocess.Popen] = None
     page: Optional[Any] = None
+
+    # MPV IPC & recording trigger configuration
+    session_id = os.getpid()
+    ipc_socket = f"/tmp/mpv_soccer_{session_id}.sock"
+    trigger_file = Path(f"/tmp/mpv_trigger_{session_id}.txt")
+    lua_script = str(SRC_DIR / "mpv_recorder.lua")
+    recorder = StreamRecorder(socket_path=ipc_socket, trigger_file=trigger_file)
 
     relay = HlsRelayServer()
     relay.start()
@@ -307,6 +341,9 @@ async def play_interactive_stream_session(
                     current_proc=player_proc,
                     mute=mute,
                     controls=controls,
+                    ipc_socket=ipc_socket,
+                    lua_script=lua_script,
+                    trigger_file=str(trigger_file),
                 )
 
                 if ok:
@@ -317,45 +354,113 @@ async def play_interactive_stream_session(
                     status_msg = f"⚠️ Could not load '{streams[cursor_idx]['name']}'. Select another stream."
                     render_stream_menu(match_title, streams, cursor_idx, active_idx, status_msg, is_playing=False)
 
+                last_rec_render_time = time.time()
+
                 while True:
                     key = get_key_nonblocking(timeout=0.1)
+                    trigger_action = recorder.check_trigger()
+                    action = trigger_action or key
+
+                    is_currently_playing = (player_proc is not None and player_proc.poll() is None)
 
                     # Detect if MPV was closed outside terminal
                     if player_proc and player_proc.poll() is not None:
+                        if recorder.is_recording:
+                            await asyncio.to_thread(recorder.stop_recording)
                         player_proc = None
                         status_msg = (
                             f"⏸️ MPV closed. Press ENTER to watch '{streams[cursor_idx]['name']}', or 'q' to exit."
                         )
-                        render_stream_menu(match_title, streams, cursor_idx, active_idx, status_msg, is_playing=False)
+                        render_stream_menu(
+                            match_title,
+                            streams,
+                            cursor_idx,
+                            active_idx,
+                            status_msg,
+                            is_playing=False,
+                            is_recording=False,
+                        )
 
-                    if not key:
+                    if not action:
+                        # Update recording elapsed timer every second
+                        if recorder.is_recording and time.time() - last_rec_render_time >= 1.0:
+                            last_rec_render_time = time.time()
+                            render_stream_menu(
+                                match_title,
+                                streams,
+                                cursor_idx,
+                                active_idx,
+                                status_msg,
+                                is_playing=is_currently_playing,
+                                is_recording=True,
+                                elapsed_rec=recorder.get_elapsed_str(),
+                            )
                         await asyncio.sleep(0.02)
                         continue
 
-                    is_currently_playing = (player_proc is not None and player_proc.poll() is None)
-
-                    if key == "UP":
+                    if action == "UP":
                         if cursor_idx > 0:
                             cursor_idx -= 1
                             render_stream_menu(
-                                match_title, streams, cursor_idx, active_idx, status_msg, is_playing=is_currently_playing
+                                match_title,
+                                streams,
+                                cursor_idx,
+                                active_idx,
+                                status_msg,
+                                is_playing=is_currently_playing,
+                                is_recording=recorder.is_recording,
+                                elapsed_rec=recorder.get_elapsed_str(),
                             )
-                    elif key == "DOWN":
+                    elif action == "DOWN":
                         if cursor_idx < len(streams) - 1:
                             cursor_idx += 1
                             render_stream_menu(
-                                match_title, streams, cursor_idx, active_idx, status_msg, is_playing=is_currently_playing
+                                match_title,
+                                streams,
+                                cursor_idx,
+                                active_idx,
+                                status_msg,
+                                is_playing=is_currently_playing,
+                                is_recording=recorder.is_recording,
+                                elapsed_rec=recorder.get_elapsed_str(),
                             )
-                    elif key == "ENTER":
+                    elif action == "ENTER":
                         if cursor_idx == active_idx and player_proc and player_proc.poll() is None:
                             status_msg = f"ℹ️ '{streams[cursor_idx]['name']}' is already playing in MPV"
                             render_stream_menu(
-                                match_title, streams, cursor_idx, active_idx, status_msg, is_playing=True
+                                match_title,
+                                streams,
+                                cursor_idx,
+                                active_idx,
+                                status_msg,
+                                is_playing=True,
+                                is_recording=recorder.is_recording,
+                                elapsed_rec=recorder.get_elapsed_str(),
                             )
                         else:
+                            if recorder.is_recording:
+                                status_msg = "💾 Finalizing active recording before stream switch..."
+                                render_stream_menu(
+                                    match_title,
+                                    streams,
+                                    cursor_idx,
+                                    active_idx,
+                                    status_msg,
+                                    is_playing=is_currently_playing,
+                                    is_recording=True,
+                                    elapsed_rec=recorder.get_elapsed_str(),
+                                )
+                                await asyncio.to_thread(recorder.stop_recording)
+
                             status_msg = f"⏳ Switching to '{streams[cursor_idx]['name']}'..."
                             render_stream_menu(
-                                match_title, streams, cursor_idx, active_idx, status_msg, is_playing=False
+                                match_title,
+                                streams,
+                                cursor_idx,
+                                active_idx,
+                                status_msg,
+                                is_playing=False,
+                                is_recording=False,
                             )
 
                             page, player_proc, ok = await switch_stream(
@@ -368,26 +473,121 @@ async def play_interactive_stream_session(
                                 current_proc=player_proc,
                                 mute=mute,
                                 controls=controls,
+                                ipc_socket=ipc_socket,
+                                lua_script=lua_script,
+                                trigger_file=str(trigger_file),
                             )
 
                             if ok:
                                 active_idx = cursor_idx
                                 status_msg = f"🟢 Playing '{streams[active_idx]['name']}' in MPV"
                                 render_stream_menu(
-                                    match_title, streams, cursor_idx, active_idx, status_msg, is_playing=True
+                                    match_title,
+                                    streams,
+                                    cursor_idx,
+                                    active_idx,
+                                    status_msg,
+                                    is_playing=True,
+                                    is_recording=False,
                                 )
                             else:
                                 status_msg = f"❌ Failed to load '{streams[cursor_idx]['name']}'. Select another stream."
                                 render_stream_menu(
-                                    match_title, streams, cursor_idx, active_idx, status_msg, is_playing=False
+                                    match_title,
+                                    streams,
+                                    cursor_idx,
+                                    active_idx,
+                                    status_msg,
+                                    is_playing=False,
+                                    is_recording=False,
                                 )
 
-                    elif key == "QUIT":
+                    elif action in ("START_RECORD", "a"):
+                        if not is_currently_playing:
+                            status_msg = "⚠️ Playback is not active. Select a stream and press ENTER."
+                        else:
+                            stream_name = streams[active_idx].get("name", "Stream") if active_idx is not None else "Stream"
+                            full_title = f"{match_title} - {stream_name}"
+                            ok, status_msg = recorder.start_recording(full_title)
+                        render_stream_menu(
+                            match_title,
+                            streams,
+                            cursor_idx,
+                            active_idx,
+                            status_msg,
+                            is_playing=is_currently_playing,
+                            is_recording=recorder.is_recording,
+                            elapsed_rec=recorder.get_elapsed_str(),
+                        )
+
+                    elif action in ("STOP_RECORD", "c"):
+                        if not recorder.is_recording:
+                            status_msg = "⚠️ No active recording. Press 'a' to start recording."
+                        else:
+                            status_msg = "💾 Finalizing and saving clip..."
+                            render_stream_menu(
+                                match_title,
+                                streams,
+                                cursor_idx,
+                                active_idx,
+                                status_msg,
+                                is_playing=is_currently_playing,
+                                is_recording=False,
+                            )
+                            dest_path, status_msg = await asyncio.to_thread(recorder.stop_recording)
+                        render_stream_menu(
+                            match_title,
+                            streams,
+                            cursor_idx,
+                            active_idx,
+                            status_msg,
+                            is_playing=is_currently_playing,
+                            is_recording=recorder.is_recording,
+                            elapsed_rec=recorder.get_elapsed_str(),
+                        )
+
+                    elif action in ("CLIP_LAST_MINUTE", "g"):
+                        if not is_currently_playing:
+                            status_msg = "⚠️ Playback is not active. Select a stream and press ENTER."
+                        else:
+                            status_msg = "⚡ Downloading all available replay buffer..."
+                            render_stream_menu(
+                                match_title,
+                                streams,
+                                cursor_idx,
+                                active_idx,
+                                status_msg,
+                                is_playing=is_currently_playing,
+                                is_recording=recorder.is_recording,
+                                elapsed_rec=recorder.get_elapsed_str(),
+                            )
+                            stream_name = streams[active_idx].get("name", "Stream") if active_idx is not None else "Stream"
+                            full_title = f"{match_title} - {stream_name}"
+                            dest_path, status_msg = await asyncio.to_thread(recorder.clip_replay_buffer, full_title)
+                        render_stream_menu(
+                            match_title,
+                            streams,
+                            cursor_idx,
+                            active_idx,
+                            status_msg,
+                            is_playing=is_currently_playing,
+                            is_recording=recorder.is_recording,
+                            elapsed_rec=recorder.get_elapsed_str(),
+                        )
+
+                    elif action == "QUIT":
                         break
-                    elif key == "ESC":
+                    elif action == "ESC":
                         status_msg = "ℹ️ Press 'q' or Ctrl+C to exit the stream session."
                         render_stream_menu(
-                            match_title, streams, cursor_idx, active_idx, status_msg, is_playing=is_currently_playing
+                            match_title,
+                            streams,
+                            cursor_idx,
+                            active_idx,
+                            status_msg,
+                            is_playing=is_currently_playing,
+                            is_recording=recorder.is_recording,
+                            elapsed_rec=recorder.get_elapsed_str(),
                         )
 
             if page:
@@ -400,6 +600,7 @@ async def play_interactive_stream_session(
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
+        recorder.cleanup()
         if player_proc and player_proc.poll() is None:
             player_proc.terminate()
             try:

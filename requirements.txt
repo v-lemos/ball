@@ -1,3 +1,5 @@
 playwright>=1.40.0
 beautifulsoup4>=4.12.0
-# System dependency: mpv (macOS: brew install mpv | Linux: sudo apt install mpv)
+# System dependencies:
+#   • mpv:    brew install mpv    (macOS) | sudo apt install mpv    (Debian/Ubuntu)
+#   • ffmpeg: brew install ffmpeg (macOS) | sudo apt install ffmpeg (Debian/Ubuntu)

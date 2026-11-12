@@ -58,6 +58,14 @@ def parse_key_bytes(data: bytes, fd: int) -> Optional[str]:
     if data == b"\x1b":
         return "ESC"
 
+    # Quick clipper hotkeys
+    if data.lower() == b"a":
+        return "START_RECORD"
+    if data.lower() == b"c":
+        return "STOP_RECORD"
+    if data.lower() == b"g":
+        return "CLIP_LAST_MINUTE"
+
     try:
         return data.decode("utf-8", errors="ignore")
     except Exception:
@@ -84,6 +92,8 @@ def render_stream_menu(
     active_idx: Optional[int],
     status_msg: str = "",
     is_playing: bool = True,
+    is_recording: bool = False,
+    elapsed_rec: str = "",
 ) -> None:
     """Renders the interactive stream switcher menu in the terminal using raw-mode compatible newlines."""
     lines = ["\033[2J\033[H"]  # Clear screen and return cursor to top-left
@@ -119,6 +129,12 @@ def render_stream_menu(
         lines.append(f"{prefix} {stream_display}")
 
     lines.append("")
+    lines.append("-" * 65)
+    if is_recording:
+        lines.append(f" \033[1;31m🔴 RECORDING LIVE CLIP [{elapsed_rec}]\033[0m")
+        lines.append("    \033[1;33m[c]\033[0m CUT!   \033[1;36m[g]\033[0m GET IT ALL!")
+    else:
+        lines.append(" \033[1;37m🎬 Clipper:\033[0m \033[1;32m[a]\033[0m ACTION!  \033[1;33m[c]\033[0m CUT!  \033[1;36m[g]\033[0m GET IT ALL!")
     lines.append("-" * 65)
     if status_msg:
         lines.append(f" {status_msg}")
