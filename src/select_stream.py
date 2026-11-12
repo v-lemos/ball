@@ -1,4 +1,3 @@
-import argparse
 import asyncio
 import logging
 from pathlib import Path
@@ -16,6 +15,7 @@ if str(SRC_DIR) not in sys.path:
 
 DEFAULT_DATA_FILE = PROJECT_ROOT / "output" / "football_games.json"
 
+from cli_args import create_parser
 from playground import launch_browser_context, reveal_window
 from terminal_menu import interactive_select
 from play_stream import auto_play_jwplayer, extract_jwplayer_source
@@ -308,6 +308,34 @@ async def resolve_stream(
 resolve_stream_headless = resolve_stream
 
 
+async def get_match_streams(
+    match_url: str,
+    post_click_wait_ms: int = 2500,
+    headless: bool = True,
+) -> List[Dict[str, str]]:
+    """Scrapes all stream options from the match page in exact site order."""
+    logger.info(f"Resolving all streams (headless={headless}) for: {match_url}...")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=headless)
+        page = await browser.new_page()
+        try:
+            await page.goto(match_url, wait_until="domcontentloaded")
+            streams = await extract_streams_from_page(page, post_click_wait_ms=post_click_wait_ms)
+            return streams
+        finally:
+            await browser.close()
+
+
+def get_default_stream_index(streams: List[Dict[str, str]]) -> int:
+    """Returns the index of the best initial stream (PT stream if found, else 0)."""
+    if not streams:
+        return 0
+    for idx, s in enumerate(streams):
+        if s.get("name", "").strip().upper().endswith("PT"):
+            return idx
+    return 0
+
+
 async def play_stream_in_browser(
     stream: Dict[str, str],
     match_url: str,
@@ -383,31 +411,12 @@ async def select_and_open_stream(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Select and open the best stream for a football match in MPV via headless relay."
-    )
-    parser.add_argument(
+    parser = create_parser(
+        "Select and open the best stream for a football match in MPV via headless relay.",
         "match_url",
-        nargs="?",
-        default=None,
-        help="URL of the match page (e.g., https://rdaily.live/match/football/WOq36LXO).",
-    )
-    parser.add_argument(
-        "--visible",
-        "--headed",
-        action="store_true",
-        help="Keep browser window visible (default: headless=True).",
-    )
-    parser.add_argument(
-        "--no-adblock",
-        action="store_true",
-        help="Disable uBlock Origin Lite.",
-    )
-    parser.add_argument(
-        "--wait-ms",
-        type=int,
-        default=2500,
-        help="Milliseconds to wait after clicking the Broadcast tab button (default: 2500).",
+        "visible",
+        "no_adblock",
+        "wait_ms",
     )
 
     args = parser.parse_args()

@@ -8,7 +8,12 @@ import socketserver
 import subprocess
 import sys
 import threading
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+SRC_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SRC_DIR.parent
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 logger = logging.getLogger("player_launcher")
 
@@ -95,7 +100,13 @@ class HlsRelayServer:
         self._playlist_ready_event = threading.Event()
 
     def update_playlist(self, content: str):
-        if "#EXTM3U" in content:
+        if not content or "#EXTM3U" not in content:
+            return
+        # Ignore placeholder/empty endlist manifests without media segments
+        if "#EXT-X-ENDLIST" in content and "#EXTINF" not in content:
+            return
+        # Accept valid manifests with actual media chunks or sub-stream playlists
+        if "#EXTINF" in content or "#EXT-X-STREAM-INF" in content:
             self.latest_playlist = content
             self._playlist_ready_event.set()
 
@@ -133,7 +144,10 @@ class HlsRelayServer:
             self._server = None
 
 
-def launch_mpv_process(stream_url: str, title: str = "Soccer Streams - Live") -> subprocess.Popen:
+def launch_mpv_process(
+    stream_url: str,
+    title: str = "Soccer Streams - Live",
+) -> subprocess.Popen:
     """Launches mpv with clean terminal output pointing to the relay URL."""
     mpv_bin = check_mpv_installed()
     cmd = [
@@ -142,8 +156,246 @@ def launch_mpv_process(stream_url: str, title: str = "Soccer Streams - Live") ->
         "--really-quiet",
         stream_url,
     ]
-    print(f"\n🚀 Launching MPV: {' '.join(cmd)}")
-    return subprocess.Popen(cmd)
+    log_path = PROJECT_ROOT / "output" / "mpv.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_path, "a", encoding="utf-8")
+    return subprocess.Popen(
+        cmd,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+    )
+
+
+async def switch_stream(
+    context,
+    relay: HlsRelayServer,
+    stream: Dict[str, str],
+    match_url: str,
+    match_title: str,
+    current_page: Optional[Any],
+    current_proc: Optional[subprocess.Popen],
+    timeout_sec: float = 12.0,
+) -> Tuple[Optional[Any], Optional[subprocess.Popen], bool]:
+    """Closes current playback and loads the new stream into MPV via HLS relay."""
+    from src.play_stream import auto_play_jwplayer
+
+    # 1. Terminate current MPV process
+    if current_proc and current_proc.poll() is None:
+        try:
+            current_proc.terminate()
+            current_proc.wait(timeout=1.0)
+        except Exception:
+            try:
+                current_proc.kill()
+            except Exception:
+                pass
+        current_proc = None
+
+    # 2. Close current browser page
+    if current_page:
+        try:
+            await current_page.close()
+        except Exception:
+            pass
+        current_page = None
+
+    # 3. Reset relay playlist buffer
+    relay.latest_playlist = ""
+    relay._playlist_ready_event.clear()
+
+    # 4. Open fresh page in existing context
+    try:
+        page = await context.new_page()
+
+        async def handle_response(resp):
+            if ".m3u8" in resp.url and "jwpltx" not in resp.url and resp.status == 200:
+                try:
+                    text = await resp.text()
+                    relay.update_playlist(text)
+                except Exception:
+                    pass
+
+        page.on("response", handle_response)
+
+        # 5. Navigate to stream URL with Referer
+        await page.goto(stream["url"], referer=match_url, wait_until="domcontentloaded")
+
+        # 6. Auto-click JW Player
+        await auto_play_jwplayer(page, timeout_ms=10000)
+
+        # 7. Wait for initial valid playlist manifest
+        got_playlist = await asyncio.to_thread(relay.wait_for_playlist, timeout_sec)
+        if not got_playlist:
+            return page, None, False
+
+        # 8. Launch MPV
+        stream_title = f"{match_title} - {stream.get('name', 'Stream')}"
+        proc = launch_mpv_process(relay.url, title=stream_title)
+
+        # 9. Verify MPV stays alive for at least 1 second
+        await asyncio.sleep(1.0)
+        if proc.poll() is not None:
+            logger.warning(f"MPV process exited immediately with code {proc.poll()}")
+            return page, None, False
+
+        return page, proc, True
+
+    except Exception as e:
+        logger.warning(f"Error switching to stream {stream.get('name')}: {e}")
+        return None, None, False
+
+
+async def play_interactive_stream_session(
+    streams: List[Dict[str, str]],
+    match_url: str,
+    match_title: str = "SoccerStreams Live",
+    initial_index: int = 0,
+    use_adblock: bool = True,
+    headless: bool = True,
+):
+    """Maintains an interactive terminal stream switcher while playing in MPV."""
+    check_mpv_installed()
+    from playwright.async_api import async_playwright
+    from src.playground import launch_browser_context
+    from src.terminal_menu import TerminalRawMode, get_key_nonblocking, render_stream_menu
+
+    if not streams:
+        print("❌ No streams available to play.")
+        return
+
+    cursor_idx = max(0, min(initial_index, len(streams) - 1))
+    active_idx: Optional[int] = None
+    player_proc: Optional[subprocess.Popen] = None
+    page: Optional[Any] = None
+
+    relay = HlsRelayServer()
+    relay.start()
+
+    try:
+        async with async_playwright() as p:
+            context, initial_page = await launch_browser_context(
+                p=p,
+                use_adblock=use_adblock,
+                headless=headless,
+            )
+            try:
+                await initial_page.close()
+            except Exception:
+                pass
+
+            with TerminalRawMode():
+                status_msg = f"⏳ Connecting to '{streams[cursor_idx]['name']}'..."
+                render_stream_menu(match_title, streams, cursor_idx, active_idx, status_msg, is_playing=False)
+
+                page, player_proc, ok = await switch_stream(
+                    context=context,
+                    relay=relay,
+                    stream=streams[cursor_idx],
+                    match_url=match_url,
+                    match_title=match_title,
+                    current_page=page,
+                    current_proc=player_proc,
+                )
+
+                if ok:
+                    active_idx = cursor_idx
+                    status_msg = f"🟢 Playing '{streams[active_idx]['name']}' in MPV"
+                    render_stream_menu(match_title, streams, cursor_idx, active_idx, status_msg, is_playing=True)
+                else:
+                    status_msg = f"⚠️ Could not load '{streams[cursor_idx]['name']}'. Select another stream."
+                    render_stream_menu(match_title, streams, cursor_idx, active_idx, status_msg, is_playing=False)
+
+                while True:
+                    key = get_key_nonblocking(timeout=0.1)
+
+                    # Detect if MPV was closed outside terminal
+                    if player_proc and player_proc.poll() is not None:
+                        player_proc = None
+                        status_msg = (
+                            f"⏸️ MPV closed. Press ENTER to watch '{streams[cursor_idx]['name']}', or 'q' to exit."
+                        )
+                        render_stream_menu(match_title, streams, cursor_idx, active_idx, status_msg, is_playing=False)
+
+                    if not key:
+                        await asyncio.sleep(0.02)
+                        continue
+
+                    is_currently_playing = (player_proc is not None and player_proc.poll() is None)
+
+                    if key == "UP":
+                        if cursor_idx > 0:
+                            cursor_idx -= 1
+                            render_stream_menu(
+                                match_title, streams, cursor_idx, active_idx, status_msg, is_playing=is_currently_playing
+                            )
+                    elif key == "DOWN":
+                        if cursor_idx < len(streams) - 1:
+                            cursor_idx += 1
+                            render_stream_menu(
+                                match_title, streams, cursor_idx, active_idx, status_msg, is_playing=is_currently_playing
+                            )
+                    elif key == "ENTER":
+                        if cursor_idx == active_idx and player_proc and player_proc.poll() is None:
+                            status_msg = f"ℹ️ '{streams[cursor_idx]['name']}' is already playing in MPV"
+                            render_stream_menu(
+                                match_title, streams, cursor_idx, active_idx, status_msg, is_playing=True
+                            )
+                        else:
+                            status_msg = f"⏳ Switching to '{streams[cursor_idx]['name']}'..."
+                            render_stream_menu(
+                                match_title, streams, cursor_idx, active_idx, status_msg, is_playing=False
+                            )
+
+                            page, player_proc, ok = await switch_stream(
+                                context=context,
+                                relay=relay,
+                                stream=streams[cursor_idx],
+                                match_url=match_url,
+                                match_title=match_title,
+                                current_page=page,
+                                current_proc=player_proc,
+                            )
+
+                            if ok:
+                                active_idx = cursor_idx
+                                status_msg = f"🟢 Playing '{streams[active_idx]['name']}' in MPV"
+                                render_stream_menu(
+                                    match_title, streams, cursor_idx, active_idx, status_msg, is_playing=True
+                                )
+                            else:
+                                status_msg = f"❌ Failed to load '{streams[cursor_idx]['name']}'. Select another stream."
+                                render_stream_menu(
+                                    match_title, streams, cursor_idx, active_idx, status_msg, is_playing=False
+                                )
+
+                    elif key == "QUIT":
+                        break
+                    elif key == "ESC":
+                        status_msg = "ℹ️ Press 'q' or Ctrl+C to exit the stream session."
+                        render_stream_menu(
+                            match_title, streams, cursor_idx, active_idx, status_msg, is_playing=is_currently_playing
+                        )
+
+            if page:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+            await context.close()
+
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
+        if player_proc and player_proc.poll() is None:
+            player_proc.terminate()
+            try:
+                player_proc.wait(timeout=1.0)
+            except Exception:
+                player_proc.kill()
+        relay.stop()
+        sys.stdout.write("\033[2J\033[H\033[?25h")
+        sys.stdout.write("📺 Stream session ended. Goodbye!\n")
+        sys.stdout.flush()
 
 
 async def play_stream_with_mpv(
@@ -158,89 +410,15 @@ async def play_stream_with_mpv(
 
     relays the live M3U8 manifest via local HTTP server, and plays in mpv.
     """
-    check_mpv_installed()
-
-    from playwright.async_api import async_playwright
-    from src.playground import launch_browser_context
-    from src.play_stream import auto_play_jwplayer
-
-    relay = HlsRelayServer()
-    relay.start()
-
-    print("\n" + "=" * 65)
-    print(" 🎬 Live Stream Player (MPV)")
-    print(f" Relay URL:  {relay.url}")
-    print(f" Stream:     {stream_url}")
-    print(f" Headless:   {headless}")
-    print("=" * 65)
-
-    player_proc: Optional[subprocess.Popen] = None
-
-    try:
-        async with async_playwright() as p:
-            print(f"\n⏳ Initializing stream session (headless={headless})...")
-            context, page = await launch_browser_context(
-                p=p,
-                use_adblock=use_adblock,
-                headless=headless,
-            )
-
-            async def handle_response(resp):
-                if ".m3u8" in resp.url and "jwpltx" not in resp.url and resp.status == 200:
-                    try:
-                        text = await resp.text()
-                        if "#EXTM3U" in text:
-                            relay.update_playlist(text)
-                    except Exception:
-                        pass
-
-            page.on("response", handle_response)
-
-            logger.info(f"Navigating to stream page: {stream_url}...")
-            await page.goto(stream_url, referer=match_url, wait_until="domcontentloaded")
-
-            # Activate JW Player
-            logger.info("Triggering video player initialization...")
-            await auto_play_jwplayer(page, timeout_ms=10000)
-
-            # Wait for initial playlist
-            print("⏳ Waiting for initial HLS stream manifest...")
-            got_playlist = await asyncio.to_thread(relay.wait_for_playlist, 12.0)
-
-            if not got_playlist:
-                print("❌ Failed to capture HLS stream manifest within timeout.")
-                await context.close()
-                return
-
-            print(f"✅ Stream manifest captured! Starting MPV...")
-
-            # Launch mpv
-            player_proc = launch_mpv_process(relay.url, title=match_title)
-
-            print("-" * 65)
-            print(" 🟢 Now playing in MPV!")
-            print(f"    Relay: {relay.url}")
-            print("    (Close MPV or press Ctrl+C in this terminal to exit)")
-            print("-" * 65 + "\n")
-
-            # Keep event loop running while mpv is alive
-            while player_proc.poll() is None:
-                await asyncio.sleep(0.5)
-
-            print("\nMPV closed.")
-            await context.close()
-
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        print("\nStopping MPV stream session...")
-    finally:
-        if player_proc and player_proc.poll() is None:
-            player_proc.terminate()
-            try:
-                player_proc.wait(timeout=2)
-            except Exception:
-                player_proc.kill()
-        relay.stop()
-        print("Relay server stopped. Done.")
+    streams = [{"name": "Stream 1", "url": stream_url}]
+    await play_interactive_stream_session(
+        streams=streams,
+        match_url=match_url,
+        match_title=match_title,
+        initial_index=0,
+        use_adblock=use_adblock,
+        headless=headless,
+    )
 
 
 # Backward compatibility alias
