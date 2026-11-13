@@ -29,6 +29,7 @@ async def run_unified_flow(
     sport: str = DEFAULT_SPORT,
     mute: bool = False,
     controls: bool = False,
+    upscale: bool = False,
     info: bool = False,
 ):
     is_headless = not visible
@@ -55,6 +56,8 @@ async def run_unified_flow(
             print(f" Mute:     Enabled")
         if controls:
             print(f" Controls: Always visible")
+        if upscale:
+            print(f" Upscale:  Enabled (FSRCNNX AI neural network, ewa_lanczossharp, deband)")
         print("=" * 65 + "\n")
         print(f"🔍 Step 1: Scraping {sport_slug} matches (headless={is_headless})...")
     else:
@@ -131,6 +134,7 @@ async def run_unified_flow(
         headless=is_headless,
         mute=mute,
         controls=controls,
+        upscale=upscale,
     )
 
 
@@ -145,6 +149,7 @@ def main():
         "sport",
         "mute",
         "controls",
+        "upscale",
         "info",
     )
 
@@ -161,6 +166,7 @@ def main():
                 sport=args.sport,
                 mute=args.mute,
                 controls=args.controls,
+                upscale=args.upscale,
                 info=args.info,
             )
         )

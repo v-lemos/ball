@@ -150,6 +150,7 @@ def launch_mpv_process(
     title: str = "Soccer Streams - Live",
     mute: bool = False,
     controls: bool = False,
+    upscale: bool = False,
     ipc_socket: Optional[str] = None,
     lua_script: Optional[str] = None,
     trigger_file: Optional[str] = None,
@@ -165,6 +166,18 @@ def launch_mpv_process(
         "--demuxer-max-back-bytes=400M",
         "--demuxer-seekable-cache=yes",
     ]
+    if upscale:
+        cmd.extend([
+            "--profile=high-quality",
+            "--vo=gpu-next",
+            "--hwdec=auto-safe",
+            "--deband=yes",
+            "--scale=ewa_lanczossharp",
+            "--cscale=ewa_lanczossharp",
+        ])
+        shader_path = PROJECT_ROOT / "shaders" / "FSRCNNX_x2_8-0-4-1.glsl"
+        if shader_path.is_file():
+            cmd.append(f"--glsl-shaders={shader_path}")
     if mute:
         cmd.append("--mute=yes")
     if controls:
@@ -197,6 +210,7 @@ async def switch_stream(
     timeout_sec: float = 12.0,
     mute: bool = False,
     controls: bool = False,
+    upscale: bool = False,
     ipc_socket: Optional[str] = None,
     lua_script: Optional[str] = None,
     trigger_file: Optional[str] = None,
@@ -260,6 +274,7 @@ async def switch_stream(
             title=stream_title,
             mute=mute,
             controls=controls,
+            upscale=upscale,
             ipc_socket=ipc_socket,
             lua_script=lua_script,
             trigger_file=trigger_file,
@@ -287,6 +302,7 @@ async def play_interactive_stream_session(
     headless: bool = True,
     mute: bool = False,
     controls: bool = False,
+    upscale: bool = False,
 ):
     """Maintains an interactive terminal stream switcher while playing in MPV."""
     check_mpv_installed()
@@ -341,6 +357,7 @@ async def play_interactive_stream_session(
                     current_proc=player_proc,
                     mute=mute,
                     controls=controls,
+                    upscale=upscale,
                     ipc_socket=ipc_socket,
                     lua_script=lua_script,
                     trigger_file=str(trigger_file),
@@ -473,6 +490,7 @@ async def play_interactive_stream_session(
                                 current_proc=player_proc,
                                 mute=mute,
                                 controls=controls,
+                                upscale=upscale,
                                 ipc_socket=ipc_socket,
                                 lua_script=lua_script,
                                 trigger_file=str(trigger_file),
@@ -621,6 +639,7 @@ async def play_stream_with_mpv(
     match_title: str = "SoccerStreams Live",
     mute: bool = False,
     controls: bool = False,
+    upscale: bool = False,
     **kwargs,
 ):
     """Maintains the authenticated DDoS-Guard session via Chromium (default headless),
@@ -637,6 +656,7 @@ async def play_stream_with_mpv(
         headless=headless,
         mute=mute,
         controls=controls,
+        upscale=upscale,
     )
 
 

@@ -74,6 +74,9 @@ python main.py -m
 # Always show mpv player controls (OSC bar)
 python main.py -c
 
+# Real-time AI neural upscaling in mpv (FSRCNNX super-resolution, deband, ewa_lanczossharp)
+python main.py -u
+
 # Custom output JSON path
 python main.py -o output/my_games.json
 
