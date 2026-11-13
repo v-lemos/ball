@@ -54,11 +54,11 @@ To run the entire workflow:
 ```bash
 source .venv/bin/activate
 
-# DEFAULT RUN:
+# ------ DEFAULT RUN: -------
 # 100% headless scraping & resolution, launches directly into MPV (1080p 60fps)
 python main.py
 
-# OPTIONAL FLAGS:
+# ------ OPTIONAL FLAGS: -------
 # Auto-select a match by team name (fuzzy matching, e.g. "porto", "portugal"...)
 python main.py -t porto
 
@@ -80,7 +80,7 @@ python main.py -u
 # Custom output JSON path
 python main.py -o output/my_games.json
 
-# ADVANCED FLAGS:
+# ------ ADVANCED FLAGS: -------
 # Custom tab wait time (in ms)
 python main.py --wait-ms 3000
 
