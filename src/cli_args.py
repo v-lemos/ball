@@ -34,14 +34,6 @@ ARGUMENT_SPECS: Dict[str, ArgumentSpec] = {
             "help": "Always show mpv player controls (OSC bar).",
         },
     ),
-    "upscale": (
-        ("-u",),
-        {
-            "dest": "upscale",
-            "action": "store_true",
-            "help": "Enable real-time AI neural upscaling in mpv (FSRCNNX neural shader, ewa_lanczossharp, deband).",
-        },
-    ),
     "info": (
         ("-i",),
         {

@@ -391,7 +391,6 @@ async def select_and_open_stream(
     visible: bool = False,
     mute: bool = False,
     controls: bool = False,
-    upscale: bool = False,
     info: bool = False,
     **kwargs,
 ):
@@ -422,7 +421,6 @@ async def select_and_open_stream(
         match_title=selected.get("name", "SoccerStreams Live"),
         mute=mute,
         controls=controls,
-        upscale=upscale,
     )
 
 
@@ -435,7 +433,6 @@ def main():
         "wait_ms",
         "mute",
         "controls",
-        "upscale",
         "info",
     )
 
@@ -471,7 +468,6 @@ def main():
                 visible=args.visible,
                 mute=args.mute,
                 controls=args.controls,
-                upscale=args.upscale,
                 info=args.info,
             )
         )

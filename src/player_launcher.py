@@ -3,13 +3,18 @@ import http.server
 import logging
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import socketserver
 import subprocess
 import sys
 import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
+import urllib.parse
+import urllib.request
+import zlib
 
 SRC_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SRC_DIR.parent
@@ -59,8 +64,40 @@ class ReusableTCPServer(socketserver.TCPServer):
     daemon_threads = True
 
 
+def unpack_png_stream_segment(data: bytes) -> bytes:
+    """Detects and unpacks MPEG-TS video chunks obfuscated inside PNG images.
+
+    Modern restream hosts hide raw MPEG-TS inside a PNG IDAT payload. This unpacks the
+    zlib-compressed scanlines and strips the leading 0x00 filter byte from each row,
+    restoring standard 188-byte synchronized MPEG-TS packets.
+    """
+    if not data or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return data
+
+    try:
+        width = int.from_bytes(data[16:20], "big")
+        height = int.from_bytes(data[20:24], "big")
+        idat_pos = data.find(b"IDAT")
+        if idat_pos == -1:
+            return data
+        idat_len = int.from_bytes(data[idat_pos - 4 : idat_pos], "big")
+        compressed_payload = data[idat_pos + 4 : idat_pos + 4 + idat_len]
+        decompressed = zlib.decompress(compressed_payload)
+
+        row_len = width * 3  # RGB 8-bit
+        scanline_len = 1 + row_len  # 1 filter byte + row bytes
+        output_ts = bytearray()
+        for r in range(height):
+            start = r * scanline_len + 1  # Skip the 0x00 PNG filter byte
+            output_ts.extend(decompressed[start : start + row_len])
+        return bytes(output_ts)
+    except Exception as e:
+        logger.debug(f"Segment PNG unpack error: {e}")
+        return data
+
+
 class HlsRelayHandler(http.server.BaseHTTPRequestHandler):
-    """Serves the latest intercepted M3U8 playlist to local media players."""
+    """Serves the latest intercepted M3U8 playlist and proxies/unpacks video segments."""
 
     server_instance: "HlsRelayServer"
 
@@ -69,7 +106,9 @@ class HlsRelayHandler(http.server.BaseHTTPRequestHandler):
         return
 
     def do_GET(self):
-        if self.path in ("/live.m3u8", "/"):
+        parsed = urllib.parse.urlparse(self.path)
+
+        if parsed.path in ("/live.m3u8", "/"):
             content = self.server_instance.latest_playlist
             if not content:
                 self.send_response(503)
@@ -77,7 +116,18 @@ class HlsRelayHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b"Playlist not ready yet.")
                 return
 
-            data = content.encode("utf-8")
+            # Rewrite segment URLs so mpv downloads them through our local unmasking relay
+            rewritten_lines = []
+            relay_base = f"http://127.0.0.1:{self.server_instance.port}/chunk?url="
+            for line in content.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("http://") or stripped.startswith("https://"):
+                    encoded_url = urllib.parse.quote(stripped, safe="")
+                    rewritten_lines.append(f"{relay_base}{encoded_url}")
+                else:
+                    rewritten_lines.append(line)
+
+            data = ("\n".join(rewritten_lines) + "\n").encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/vnd.apple.mpegurl")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -85,6 +135,43 @@ class HlsRelayHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+
+        elif parsed.path == "/chunk":
+            query = urllib.parse.parse_qs(parsed.query)
+            target_url = query.get("url", [None])[0]
+            if not target_url:
+                self.send_response(400)
+                self.end_headers()
+                return
+
+            try:
+                headers = {
+                    "Referer": "https://hls.st/",
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                    ),
+                    "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": '"macOS"',
+                }
+                req = urllib.request.Request(target_url, headers=headers)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    raw_chunk = resp.read()
+
+                # Unpack PNG disguised video chunks to pristine MPEG-TS
+                clean_ts = unpack_png_stream_segment(raw_chunk)
+
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp2t")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Length", str(len(clean_ts)))
+                self.end_headers()
+                self.wfile.write(clean_ts)
+            except Exception as e:
+                logger.debug(f"Error proxying chunk: {e}")
+                self.send_response(502)
+                self.end_headers()
         else:
             self.send_response(404)
             self.end_headers()
@@ -148,36 +235,35 @@ class HlsRelayServer:
 def launch_mpv_process(
     stream_url: str,
     title: str = "Soccer Streams - Live",
+    referer: Optional[str] = None,
     mute: bool = False,
     controls: bool = False,
-    upscale: bool = False,
     ipc_socket: Optional[str] = None,
     lua_script: Optional[str] = None,
     trigger_file: Optional[str] = None,
 ) -> subprocess.Popen:
     """Launches mpv with clean terminal output pointing to the relay URL."""
     mpv_bin = check_mpv_installed()
+    chrome_ua = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    )
     cmd = [
         mpv_bin,
         f"--title=⚽ {title}",
         "--really-quiet",
+        f"--user-agent={chrome_ua}",
+        # Force mpv to select the top bitrate and avoid throttled low-quality renditions
+        "--hls-bitrate=max",
+        # Software decode prevents macOS VideoToolbox macroblock smearing on stream packet loss
+        "--hwdec=no",
         # Buffering settings to enable deep rewind cache for instant goal/replay clipping
         "--demuxer-max-bytes=500M",
         "--demuxer-max-back-bytes=400M",
         "--demuxer-seekable-cache=yes",
     ]
-    if upscale:
-        cmd.extend([
-            "--profile=high-quality",
-            "--vo=gpu-next",
-            "--hwdec=auto-safe",
-            "--deband=yes",
-            "--scale=ewa_lanczossharp",
-            "--cscale=ewa_lanczossharp",
-        ])
-        shader_path = PROJECT_ROOT / "shaders" / "FSRCNNX_x2_8-0-4-1.glsl"
-        if shader_path.is_file():
-            cmd.append(f"--glsl-shaders={shader_path}")
+    if referer:
+        cmd.append(f"--referrer={referer}")
     if mute:
         cmd.append("--mute=yes")
     if controls:
@@ -210,7 +296,6 @@ async def switch_stream(
     timeout_sec: float = 12.0,
     mute: bool = False,
     controls: bool = False,
-    upscale: bool = False,
     ipc_socket: Optional[str] = None,
     lua_script: Optional[str] = None,
     trigger_file: Optional[str] = None,
@@ -272,9 +357,9 @@ async def switch_stream(
         proc = launch_mpv_process(
             relay.url,
             title=stream_title,
+            referer=stream.get("url") or match_url,
             mute=mute,
             controls=controls,
-            upscale=upscale,
             ipc_socket=ipc_socket,
             lua_script=lua_script,
             trigger_file=trigger_file,
@@ -302,7 +387,6 @@ async def play_interactive_stream_session(
     headless: bool = True,
     mute: bool = False,
     controls: bool = False,
-    upscale: bool = False,
 ):
     """Maintains an interactive terminal stream switcher while playing in MPV."""
     check_mpv_installed()
@@ -357,7 +441,6 @@ async def play_interactive_stream_session(
                     current_proc=player_proc,
                     mute=mute,
                     controls=controls,
-                    upscale=upscale,
                     ipc_socket=ipc_socket,
                     lua_script=lua_script,
                     trigger_file=str(trigger_file),
@@ -490,7 +573,6 @@ async def play_interactive_stream_session(
                                 current_proc=player_proc,
                                 mute=mute,
                                 controls=controls,
-                                upscale=upscale,
                                 ipc_socket=ipc_socket,
                                 lua_script=lua_script,
                                 trigger_file=str(trigger_file),
@@ -639,7 +721,6 @@ async def play_stream_with_mpv(
     match_title: str = "SoccerStreams Live",
     mute: bool = False,
     controls: bool = False,
-    upscale: bool = False,
     **kwargs,
 ):
     """Maintains the authenticated DDoS-Guard session via Chromium (default headless),
@@ -656,7 +737,6 @@ async def play_stream_with_mpv(
         headless=headless,
         mute=mute,
         controls=controls,
-        upscale=upscale,
     )
 
 

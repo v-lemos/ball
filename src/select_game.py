@@ -363,7 +363,6 @@ async def run_game_selection(
     sport: str = DEFAULT_SPORT,
     mute: bool = False,
     controls: bool = False,
-    upscale: bool = False,
     info: bool = False,
 ):
     is_headless = not visible
@@ -421,7 +420,6 @@ async def run_game_selection(
             headless=is_headless,
             mute=mute,
             controls=controls,
-            upscale=upscale,
         )
 
 
@@ -436,7 +434,6 @@ def main():
         "sport",
         "mute",
         "controls",
-        "upscale",
         "info",
     )
 
@@ -453,7 +450,6 @@ def main():
                 sport=args.sport,
                 mute=args.mute,
                 controls=args.controls,
-                upscale=args.upscale,
                 info=args.info,
             )
         )
