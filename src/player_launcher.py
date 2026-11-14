@@ -352,7 +352,18 @@ async def switch_stream(
         if not got_playlist:
             return page, None, False
 
-        # 8. Launch MPV
+        # 8. Mute browser audio but keep playback active so JW Player continues
+        # refreshing the live .m3u8 manifest every 3-4 seconds.
+        try:
+            await page.evaluate("""() => {
+                document.querySelectorAll('video').forEach(v => {
+                    try { v.muted = true; v.volume = 0; } catch(e) {}
+                });
+            }""")
+        except Exception:
+            pass
+
+        # 9. Launch MPV
         stream_title = f"{match_title} - {stream.get('name', 'Stream')}"
         proc = launch_mpv_process(
             relay.url,
@@ -365,7 +376,7 @@ async def switch_stream(
             trigger_file=trigger_file,
         )
 
-        # 9. Verify MPV stays alive for at least 1 second
+        # 10. Verify MPV stays alive for at least 1 second
         await asyncio.sleep(1.0)
         if proc.poll() is not None:
             logger.warning(f"MPV process exited immediately with code {proc.poll()}")
